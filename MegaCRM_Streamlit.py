@@ -44,7 +44,7 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
-# 🧠 تحميل كل أوراق الموظفين (مع فرض الهيدر لو ناقص)
+# 🧠 تحميل كل أوراق الموظفين — نسخة آمنة (بدون get_all_records)
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = client.open_by_key(SPREADSHEET_ID)
@@ -54,18 +54,37 @@ def load_all_data():
     for ws in worksheets:
         all_employes.append(ws.title)
 
-        # تأمين صفّ الهيدر
-        rows = ws.get_all_values()
-        if not rows:
-            ws.append_row(EXPECTED_HEADERS)
-            rows = ws.get_all_values()
-        header = rows[0] if rows else []
-        if (len(header) < len(EXPECTED_HEADERS)) or any((h is None) or (str(h).strip() == "") for h in header):
-            ws.update("1:1", [EXPECTED_HEADERS])
+        # اقرأ القيم الخام
+        rows = ws.get_all_values()  # list[list[str]]
 
-        # جلب سجلات وفق الهيدر المتوقع
-        records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
-        df = pd.DataFrame(records) if records else pd.DataFrame(columns=EXPECTED_HEADERS)
+        # لو الورقة فاضية: ثبّت الهيدر القياسي
+        if not rows:
+            ws.update("1:1", [EXPECTED_HEADERS])
+            rows = ws.get_all_values()
+
+        # ثبّت صفّ الهيدر لتفادي الدمج/النقص/التكرار
+        try:
+            ws.update("1:1", [EXPECTED_HEADERS])
+            rows = ws.get_all_values()
+        except Exception:
+            # لو ما نجمش يحدّث (صلاحيات/حماية)، نكمّل بالقيم الموجودة
+            pass
+
+        # صفوف البيانات تحت الهيدر
+        data_rows = rows[1:] if len(rows) > 1 else []
+
+        # طوّل/قصّر كل صف لطول EXPECTED_HEADERS
+        fixed_rows = []
+        for r in data_rows:
+            r = list(r) if r is not None else []
+            if len(r) < len(EXPECTED_HEADERS):
+                r = r + [""] * (len(EXPECTED_HEADERS) - len(r))
+            else:
+                r = r[:len(EXPECTED_HEADERS)]
+            fixed_rows.append(r)
+
+        # ابنِ DataFrame بأعمدة ثابتة
+        df = pd.DataFrame(fixed_rows, columns=EXPECTED_HEADERS)
         df["__sheet_name"] = ws.title
         all_dfs.append(df)
 
