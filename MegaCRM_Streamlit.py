@@ -435,15 +435,32 @@ if role == "موظف" and employee:
             from urllib.parse import quote
             wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
             st.link_button("فتح واتساب", wa_url)
-# 🔒 إخفاء عناصر Streamlit (Footer, MainMenu, Header, GitHub owner)
-hide_streamlit_style = """
-    <style>
-    #MainMenu {visibility: hidden;}
-    footer {visibility: hidden;}
-    header {visibility: hidden;}
-    .stAppDeployButton {display: none;}
-    .viewerBadge_container__1QSob {display: none;}
-    </style>
+# 🔒 إخفاء كل آثار Streamlit/GitHub للزائرين
+HIDE_STREAMLIT = """
+<style>
+/* عناصر عامة */
+#MainMenu {visibility: hidden !important;}
+header {visibility: hidden !important;}
+footer {visibility: hidden !important;}
+
+/* شريط الأدوات/الدبلوي */
+.stAppDeployButton, .stDeployButton {display: none !important;}
+[data-testid="stDecoration"] {display: none !important;}
+[data-testid="stToolbar"] {display: none !important;}
+[data-testid="stStatusWidget"] {display: none !important;}
+.viewerBadge_container__1QSob, .viewerBadge_link__1S137 {display: none !important;}
+
+/* أي روابط/بادجات تشير إلى github أو streamlit */
+a[href*="github.com"] {display: none !important;}
+a[href*="streamlit.io"], a[href*="streamlit.app"] {display: none !important;}
+
+/* بعض الكلاسات تتغيّر بين إصدارات Streamlit — نخفي الأكثر شيوعاً */
+.css-15zrgzn, .css-nahz7x, .css-1v0mbdj {display: none !important;}
+
+/* إزالة أي مساحة سفلية متبقية */
+footer:empty {display: none !important;}
+</style>
 """
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+st.markdown(HIDE_STREAMLIT, unsafe_allow_html=True)
+
 
