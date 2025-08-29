@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — نسخة مُحدّثة (Cloud + Local)
+# MegaCRM_Streamlit_App.py — نسخة مُحدّثة (Cloud + Local + Dashboard + Admin Add Client)
 
 import json
 import streamlit as st
@@ -94,7 +94,6 @@ def load_all_data():
 df_all, all_employes = load_all_data()
 
 # 🎛️ اختيار الموظف أو المسؤول
-# (تحذير قديم use_column_width → استعمل use_container_width)
 try:
     st.sidebar.image(Image.open("logo.png"), use_container_width=True)
 except Exception:
@@ -103,9 +102,52 @@ except Exception:
 role = st.sidebar.selectbox("الدور", ["موظف", "أدمن"])
 employee = st.sidebar.selectbox("اختر اسمك", all_employes) if role == "موظف" else None
 
-# 📌 لوحة تحكم الأدمن: إضافة/حذف موظف
+# ================== Dashboard أعلى الصفحة ==================
+st.title("📊 MegaCRM - إدارة العملاء")
+
+# تجهيز بيانات للـ Dashboard
+df_dash = df_all.copy()
+today_str = datetime.now().strftime("%d/%m/%Y")
+
+# إجمالي العملاء
+total_clients = len(df_dash)
+
+# تنبيهات اليوم (Alerte مش فاضي أو تاريخ المتابعة اليوم)
+alerts_today = 0
+if not df_dash.empty:
+    col_alert = df_dash["Alerte"].fillna("").astype(str).str.strip()
+    col_suivi = df_dash["Date de suivi"].fillna("").astype(str).str.strip()
+    alerts_today = int(((col_alert != "") | (col_suivi == today_str)).sum())
+
+# نسبة التسجيل (% من "Inscription" == "Oui")
+reg_col = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower() if not df_dash.empty else pd.Series([], dtype=str)
+registered = int((reg_col == "oui").sum()) if not df_dash.empty else 0
+rate = round((registered / total_clients) * 100, 2) if total_clients > 0 else 0.0
+
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.metric("👥 إجمالي العملاء", f"{total_clients}")
+with c2:
+    st.metric("🚨 تنبيهات اليوم", f"{alerts_today}")
+with c3:
+    st.metric("✅ نسبة التسجيل", f"{rate}%")
+
+# جدول ملخّص حسب الموظّف
+if not df_dash.empty:
+    grp = df_dash.groupby("__sheet_name").agg(
+        Clients=("Nom & Prénom", "count"),
+        Inscrits=("Inscription", lambda x: (x.astype(str).str.strip().str.lower() == "oui").sum())
+    )
+    grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
+    grp["% تسجيل"] = grp["% تسجيل"].round(2)
+    st.subheader("📈 ملخص حسب الموظّف")
+    st.dataframe(grp)
+
+# ================== لوحة الأدمن ==================
 if role == "أدمن":
-    st.subheader("📋 إدارة الموظفين")
+    st.subheader("👨‍💼 إدارة الموظفين")
+
+    # ➕ إضافة موظف
     st.markdown("### ➕ إضافة موظف")
     new_emp = st.text_input("اسم الموظف الجديد")
     if st.button("إنشاء ورقة جديدة"):
@@ -121,14 +163,48 @@ if role == "أدمن":
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
+    # ➕ إضافة عميل جديد لأي موظّف (من الأدمن)
+    st.markdown("### ➕ إضافة عميل جديد (من الأدمن)")
+    with st.form("admin_add_client_form"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nom_a = st.text_input("👤 الاسم و اللقب", key="admin_nom")
+            tel_a = st.text_input("📞 رقم الهاتف", key="admin_tel")
+            formation_a = st.text_input("📚 التكوين", key="admin_formation")
+        with col2:
+            type_contact_a = st.selectbox("📞 نوع التواصل", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key="admin_type")
+            suivi_date_a = st.date_input("📆 تاريخ المتابعة", value=date.today(), key="admin_suivi")
+            employee_choice = st.selectbox("👨‍💼 الموظف", all_employes, key="admin_emp")
+
+        add_admin_client = st.form_submit_button("📥 أضف العميل")
+        if add_admin_client:
+            if not (nom_a and tel_a and formation_a and employee_choice):
+                st.error("❌ الرجاء ملء جميع الحقول الأساسية")
+            else:
+                try:
+                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee_choice)
+                    values = ws.get_all_values()
+                    tel_idx = EXPECTED_HEADERS.index("Téléphone")
+                    existing = {r[tel_idx].strip() for r in values[1:] if len(r) > tel_idx and r[tel_idx].strip()}
+                    if tel_a in existing:
+                        st.warning("⚠️ رقم الهاتف موجود مسبقًا")
+                    else:
+                        date_ajout = datetime.now().strftime("%d/%m/%Y")
+                        ws.append_row([nom_a, tel_a, type_contact_a, formation_a, "", date_ajout, str(suivi_date_a), "", "", employee_choice, ""])
+                        st.success(f"✅ تم إضافة العميل ({nom_a}) إلى موظّف: {employee_choice}")
+                        st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء الإضافة: {e}")
+
+    # 🗑️ حذف موظف (تنبيه فقط)
     st.markdown("### 🗑️ حذف موظف")
-    emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes)
+    emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes, key="delete_emp")
     if st.button("❗ احذف هذا الموظف"):
         st.warning("⚠️ لا يمكن الحذف مباشرة عبر Streamlit لأسباب أمنية. احذف يدويًا من Google Sheets.")
 
-# 📊 عرض بيانات الموظف
+# ================== واجهة الموظّف ==================
 if role == "موظف" and employee:
-    st.title(f"📁 لوحة {employee}")
+    st.subheader(f"📁 لوحة {employee}")
     df_emp = df_all[df_all["__sheet_name"] == employee].copy()
 
     # تنبيه إن كانت الشيت فارغة
@@ -150,7 +226,10 @@ if role == "موظف" and employee:
 
         # عرض الجدول مع تلوين Alerte
         if not filtered_df.empty:
-            st.dataframe(filtered_df.drop(columns=["Mois", "__sheet_name"]).style.applymap(color_alerte, subset=["Alerte"]))
+            st.dataframe(
+                filtered_df.drop(columns=["Mois", "__sheet_name"])
+                .style.applymap(color_alerte, subset=["Alerte"])
+            )
         else:
             st.info("لا توجد بيانات في هذا الشهر.")
 
@@ -222,7 +301,7 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الحفظ: {e}")
 
-        # ➕ إضافة عميل (تظهر دائمًا)
+        # ➕ إضافة عميل (لدى الموظّف نفسه)
         st.markdown("### ➕ أضف عميل جديد")
         nom = st.text_input("الاسم و اللقب")
         tel = st.text_input("رقم الهاتف")
