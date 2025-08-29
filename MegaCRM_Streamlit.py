@@ -435,17 +435,15 @@ if role == "موظف" and employee:
             from urllib.parse import quote
             wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
             st.link_button("فتح واتساب", wa_url)
+# 🔒 إخفاء عناصر Streamlit (Footer, MainMenu, Header, GitHub owner)
 hide_streamlit_style = """
     <style>
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
     .stAppDeployButton {display: none;}
+    .viewerBadge_container__1QSob {display: none;}
     </style>
 """
 st.markdown(hide_streamlit_style, unsafe_allow_html=True)
 
-    </style>
-"""
-st.markdown(hide_streamlit_style, unsafe_allow_html=True)
-"""
