@@ -435,3 +435,12 @@ if role == "موظف" and employee:
             from urllib.parse import quote
             wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
             st.link_button("فتح واتساب", wa_url)
+hide_streamlit_style = """
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    </style>
+"""
+st.markdown(hide_streamlit_style, unsafe_allow_html=True)
+
