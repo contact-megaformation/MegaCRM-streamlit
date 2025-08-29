@@ -175,10 +175,3 @@ with st.form("add_client_form"):
             else:
                 ws.append_row([nom, tel, contact_type, formation, "", date.today().strftime("%Y-%m-%d"), str(suivi_date), "", "", employee_choice, ""])
                 st.success("✅ تم إضافة العميل")
-git init
-git branch -M main
-git add .
-git commit -m "Initial MegaCRM Streamlit app"
-git remote add origin https://github.com/contact-megaformation/MegaCRM.git
-git push -u origin main
-
