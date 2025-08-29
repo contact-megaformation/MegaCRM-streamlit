@@ -9,6 +9,17 @@ from datetime import datetime, date
 from PIL import Image
 
 st.set_page_config(page_title="MegaCRM", layout="wide")
+# ===== Logo + عنوان =====
+try:
+    st.image("logo.png", use_container_width=False, width=200)
+except Exception:
+    st.warning("⚠️ Logo غير موجود في المسار")
+
+st.markdown(
+    "<h1 style='text-align:center; color:#333;'>📊 MegaCRM - إدارة العملاء</h1>",
+    unsafe_allow_html=True
+)
+st.markdown("---")
 
 # ===== Google Sheets Auth (Secrets أولاً ثم ملف محلي) =====
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
