@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — نسخة جاهزة للويب (Streamlit Cloud)
+# MegaCRM_Streamlit_App.py — نسخة مُحدّثة (Cloud + Local)
 
 import json
 import streamlit as st
@@ -6,31 +6,37 @@ import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
-import urllib.parse
+from PIL import Image
 
-# -------- إعداد صفحة ستريمليت --------
 st.set_page_config(page_title="MegaCRM", layout="wide")
 
-# -------- Google Sheets Auth عبر Secrets (ويب) أو ملف محلي (ديف) --------
+# ===== إعداد الاتصال بـ Google Sheets (Secrets أولاً، ثم ملف محلي كنسخة احتياطية) =====
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 
-def make_client():
-    # على الكلاود: نقرأ من Secrets
-    if "gcp_service_account" in st.secrets:
+def make_client_and_sheet_id():
+    # نحاول نقرأ من Secrets (صيغة TOML table أو JSON string)
+    try:
         sa = st.secrets["gcp_service_account"]
-        if isinstance(sa, str):
-            sa = json.loads(sa)
-        creds = Credentials.from_service_account_info(sa, scopes=SCOPE)
+        if hasattr(sa, "keys"):      # TOML table
+            sa_info = dict(sa)
+        elif isinstance(sa, str):    # JSON كنص
+            sa_info = json.loads(sa)
+        else:
+            raise ValueError("صيغة gcp_service_account غير مدعومة")
+
+        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
         client = gspread.authorize(creds)
         sheet_id = st.secrets["SPREADSHEET_ID"]
         return client, sheet_id
-    # محليًا (تطوير): fallback للملف
-    creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
-    client = gspread.authorize(creds)
-    sheet_id = st.secrets.get("SPREADSHEET_ID", "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI")
-    return client, sheet_id
+    except Exception:
+        # تشغيل محلي: ملف JSON
+        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
+        client = gspread.authorize(creds)
+        # بدّل هذا لو حبيت ID آخر محليًا
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"
+        return client, sheet_id
 
-client, SPREADSHEET_ID = make_client()
+client, SPREADSHEET_ID = make_client_and_sheet_id()
 
 EXPECTED_HEADERS = [
     "Nom & Prénom","Téléphone","Type de contact","Formation",
@@ -38,229 +44,187 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
-# -------- تحميل كل أوراق الموظفين (مع فرض هيدر صحيح) --------
-@st.cache_data(ttl=120)
-def load_all_data(spreadsheet_id: str):
-    sh = client.open_by_key(spreadsheet_id)
-    sheets = sh.worksheets()
-    all_data, all_employees = [], []
-    for ws in sheets:
-        all_employees.append(ws.title)
+# 🧠 تحميل كل أوراق الموظفين (مع فرض الهيدر لو ناقص)
+@st.cache_data(ttl=600)
+def load_all_data():
+    sh = client.open_by_key(SPREADSHEET_ID)
+    worksheets = sh.worksheets()
+    all_dfs, all_employes = [], []
+
+    for ws in worksheets:
+        all_employes.append(ws.title)
+
+        # تأمين صفّ الهيدر
         rows = ws.get_all_values()
-        # لو الورقة فارغة تمامًا، نجهّز الهيدر
         if not rows:
             ws.append_row(EXPECTED_HEADERS)
             rows = ws.get_all_values()
-        header = rows[0]
-        # لو الهيدر ناقص/فيه فراغات → نفرض القياسي
+        header = rows[0] if rows else []
         if (len(header) < len(EXPECTED_HEADERS)) or any((h is None) or (str(h).strip() == "") for h in header):
             ws.update("1:1", [EXPECTED_HEADERS])
 
-        recs = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
-        df = pd.DataFrame(recs) if recs else pd.DataFrame(columns=EXPECTED_HEADERS)
-        df["Employe"] = ws.title
-        all_data.append(df)
+        # جلب سجلات وفق الهيدر المتوقع
+        records = ws.get_all_records(expected_headers=EXPECTED_HEADERS)
+        df = pd.DataFrame(records) if records else pd.DataFrame(columns=EXPECTED_HEADERS)
+        df["__sheet_name"] = ws.title
+        all_dfs.append(df)
 
-    big = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame(columns=EXPECTED_HEADERS)
-    return big, all_employees
+    big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS + ["__sheet_name"])
+    return big, all_employes
 
-# -------- واجهة المستخدم --------
-st.title("📊 MegaCRM - إدارة العملاء")
+df_all, all_employes = load_all_data()
 
-df, all_employees = load_all_data(SPREADSHEET_ID)
+# 🎛️ اختيار الموظف أو المسؤول
+# (تحذير قديم use_column_width → استعمل use_container_width)
+try:
+    st.sidebar.image(Image.open("logo.png"), use_container_width=True)
+except Exception:
+    pass
 
-# -------- معالجة التاريخ والتنبيه بأمان --------
-if "Date ajout" in df.columns:
-    df["Date ajout"] = pd.to_datetime(df["Date ajout"], dayfirst=True, errors="coerce")
-else:
-    df["Date ajout"] = pd.NaT
-df["Mois"] = df["Date ajout"].dt.strftime("%m")
+role = st.sidebar.selectbox("الدور", ["موظف", "أدمن"])
+employee = st.sidebar.selectbox("اختر اسمك", all_employes) if role == "موظف" else None
 
-def compute_alerte(row):
-    current = str(row.get("Alerte", "") or "").strip()
-    d = pd.to_datetime(row.get("Date de suivi"), dayfirst=True, errors="coerce")
-    if pd.notna(d) and d.date() == date.today():
-        return "⏰ متابعة اليوم"
-    return current
+# 📌 لوحة تحكم الأدمن: إضافة/حذف موظف
+if role == "أدمن":
+    st.subheader("📋 إدارة الموظفين")
+    st.markdown("### ➕ إضافة موظف")
+    new_emp = st.text_input("اسم الموظف الجديد")
+    if st.button("إنشاء ورقة جديدة"):
+        try:
+            sh = client.open_by_key(SPREADSHEET_ID)
+            if new_emp and new_emp not in [w.title for w in sh.worksheets()]:
+                sh.add_worksheet(title=new_emp, rows="1000", cols="20")
+                sh.worksheet(new_emp).update("1:1", [EXPECTED_HEADERS])
+                st.success("✔️ تم إنشاء الموظف بنجاح")
+                st.cache_data.clear()
+            else:
+                st.warning("⚠️ الاسم فارغ أو الموظف موجود مسبقًا")
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
 
-df["Alerte"] = df.apply(compute_alerte, axis=1)
+    st.markdown("### 🗑️ حذف موظف")
+    emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes)
+    if st.button("❗ احذف هذا الموظف"):
+        st.warning("⚠️ لا يمكن الحذف مباشرة عبر Streamlit لأسباب أمنية. احذف يدويًا من Google Sheets.")
 
-# -------- الفلاتر --------
-st.sidebar.header("🎛️ فلترة")
-selected_employe = st.sidebar.selectbox("👤 الموظف", options=["الكل"] + all_employees)
-selected_month = st.sidebar.selectbox("📅 الشهر", options=["الكل"] + [f"{i:02d}" for i in range(1, 13)])
-alert_only = st.sidebar.checkbox("🚨 عرض العملاء الذين لديهم تنبيه فقط")
-search_term = st.sidebar.text_input("🔍 بحث (تكوين أو رقم الهاتف)")
+# 📊 عرض بيانات الموظف
+if role == "موظف" and employee:
+    st.title(f"📁 لوحة {employee}")
+    df_emp = df_all[df_all["__sheet_name"] == employee].copy()
 
-filtered_df = df.copy()
-if selected_employe != "الكل":
-    filtered_df = filtered_df[filtered_df["Employe"] == selected_employe]
-if selected_month != "الكل":
-    filtered_df = filtered_df[filtered_df["Mois"] == selected_month]
-if alert_only:
-    filtered_df = filtered_df[filtered_df["Alerte"].fillna("").astype(str).str.strip() != ""]
-if search_term:
-    q = search_term.strip()
-    filtered_df = filtered_df[
-        filtered_df["Formation"].fillna("").astype(str).str.contains(q, case=False) |
-        filtered_df["Téléphone"].fillna("").astype(str).str.contains(q)
-    ]
+    # تنبيه إن كانت الشيت فارغة
+    if df_emp.empty:
+        st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
+        st.markdown("### ➕ أضف أول عميل:")
+    else:
+        # 🔍 فلترة بالشهر (مع تأمين التاريخ)
+        if "Date ajout" in df_emp.columns:
+            df_emp["Date ajout"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
+        df_emp = df_emp.dropna(subset=["Date ajout"])
+        df_emp["Mois"] = df_emp["Date ajout"].dt.strftime("%m-%Y") if "Date ajout" in df_emp.columns else ""
+        month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
+        filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
 
-# -------- عرض العملاء --------
-st.subheader("📋 قائمة العملاء")
-if filtered_df.empty:
-    st.info("⚠️ لا توجد نتائج حسب الفلتر الحالي.")
-else:
-    st.write(f"👥 عدد العملاء: {len(filtered_df)}")
-    for i, row in filtered_df.reset_index(drop=True).iterrows():
-        alerte_txt = str(row.get("Alerte", "") or "").strip()
-        color = "#FFCCCC" if alerte_txt else "#f9f9f9"
+        # تنبيه باللون إذا Alerte موجود
+        def color_alerte(val):
+            return 'background-color: red; color: white' if str(val).strip() != "" else ''
 
-        # صياغة تاريخ الإضافة للعرض
-        raw_added = row.get("Date ajout")
-        date_ajout_str = "—"
-        if isinstance(raw_added, pd.Timestamp) and pd.notna(raw_added):
-            date_ajout_str = raw_added.strftime("%d/%m/%Y")
-        elif isinstance(raw_added, str) and raw_added.strip():
-            tmp = pd.to_datetime(raw_added, dayfirst=True, errors="coerce")
-            if pd.notna(tmp):
-                date_ajout_str = tmp.strftime("%d/%m/%Y")
+        # عرض الجدول مع تلوين Alerte
+        if not filtered_df.empty:
+            st.dataframe(filtered_df.drop(columns=["Mois", "__sheet_name"]).style.applymap(color_alerte, subset=["Alerte"]))
+        else:
+            st.info("لا توجد بيانات في هذا الشهر.")
 
-        with st.expander(f"{row.get('Nom & Prénom','')} - {row.get('Téléphone','')}", expanded=False):
-            remarque_html = ""
-            if pd.notna(row.get("Remarque")):
-                remarque_html = str(row["Remarque"]).replace("\n", "<br>")
-
-            st.markdown(f"""
-                <div style='background-color:{color}; padding:10px; border-radius:8px; line-height:1.7'>
-                - 📞 نوع التواصل: {row.get('Type de contact','')}<br>
-                - 📚 التكوين: {row.get('Formation','')}<br>
-                - 🗒️ الملاحظات:<br>{remarque_html}<br>
-                - 🕓 تاريخ الإضافة: {date_ajout_str}<br>
-                - 📆 المتابعة: {row.get('Date de suivi','')}<br>
-                - 🚨 التنبيه: <b>{alerte_txt}</b><br>
-                - ✅ التسجيل: {row.get('Inscription','')}<br>
-                - 🎨 التاغ: {row.get('Tag','')}<br>
-                </div>
-            """, unsafe_allow_html=True)
-
-            # ملاحظة جديدة
-            new_note = st.text_area("📝 ملاحظة جديدة", key=f"note_{i}")
-            if st.button("📌 أضف الملاحظة", key=f"add_note_{i}"):
-                if not new_note.strip():
-                    st.error("❌ الملاحظة فارغة")
+        # 🟢 إضافة ملاحظة
+        if not filtered_df.empty:
+            st.markdown("### ✏️ أضف ملاحظة:")
+            tel_to_update = st.selectbox("اختر رقم الهاتف", filtered_df["Téléphone"])
+            new_note = st.text_area("🗒️ ملاحظة جديدة")
+            if st.button("💾 حفظ الملاحظة"):
+                if new_note.strip() == "":
+                    st.warning("⚠️ الملاحظة فارغة!")
                 else:
                     try:
-                        ws = client.open_by_key(SPREADSHEET_ID).worksheet(row["Employe"])
-                        cell = ws.find(str(row["Téléphone"]))
-                        old_remark = ws.cell(cell.row, 5).value or ""
-                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note.strip()}"
-                        ws.update_cell(cell.row, 5, updated)
-                        st.success("✅ تمت إضافة الملاحظة")
-                        st.cache_data.clear()
+                        ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                        rows = ws.get_all_values()
+                        header = rows[0] if rows else EXPECTED_HEADERS
+                        tel_col = header.index("Téléphone") + 1
+                        rem_col = header.index("Remarque") + 1
+                        now = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        for i, row in enumerate(rows[1:], start=2):
+                            if len(row) >= tel_col and row[tel_col - 1] == tel_to_update:
+                                current = row[rem_col - 1] if len(row) >= rem_col else ""
+                                new_val = f"{current}\n[{now}]: {new_note}" if current else f"[{now}]: {new_note}"
+                                ws.update_cell(i, rem_col, new_val)
+                                st.success("✅ تمت إضافة الملاحظة")
+                                st.cache_data.clear()
+                                break
                     except Exception as e:
                         st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
 
-            # إصلاح تاريخ الإضافة لو ناقص
-            if date_ajout_str == "—":
-                if st.button("🛠️ تثبيت تاريخ الإضافة (اليوم)", key=f"fix_date_{i}"):
-                    try:
-                        ws = client.open_by_key(SPREADSHEET_ID).worksheet(row["Employe"])
-                        phone_cell = ws.find(str(row["Téléphone"]))
-                        ws.update_cell(phone_cell.row, 6, datetime.now().strftime("%d/%m/%Y"))
-                        st.success("✅ تم تثبيت التاريخ")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        st.error(f"❌ تعذّر تثبيت التاريخ: {e}")
+        # ✅ Alerte تلقائي
+        try:
+            today = datetime.now().strftime("%d/%m/%Y")
+            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+            rows = ws.get_all_values()
+            header = rows[0] if rows else EXPECTED_HEADERS
+            date_suivi_col = header.index("Date de suivi") + 1
+            alerte_col = header.index("Alerte") + 1
+            for i, row in enumerate(rows[1:], start=2):
+                if len(row) >= date_suivi_col and row[date_suivi_col - 1].strip() == today:
+                    ws.update_cell(i, alerte_col, "⏰ متابعة اليوم")
+        except Exception:
+            pass
 
-            # التاغ
-            tag_val = st.selectbox("🎨 التاغ", ["","Follow-up","Won","Ignored","Custom"], key=f"tag_{i}")
-            if st.button("🎯 حفظ التاغ", key=f"save_tag_{i}"):
+        # 🔍 فلترة بالـ Alerte
+        if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+            df_alerts = filtered_df[filtered_df["Alerte"].fillna("").astype(str).str.strip() != ""]
+            if not df_alerts.empty:
+                st.dataframe(df_alerts.drop(columns=["Mois", "__sheet_name"]).style.applymap(color_alerte, subset=["Alerte"]))
+            else:
+                st.info("لا توجد تنبيهات في هذا الفلتر.")
+
+        # 🎨 تلوين الصفوف حسب العميل
+        if not filtered_df.empty:
+            st.markdown("### 🎨 اختر لون لتمييز العميل:")
+            tel_color = st.selectbox("رقم الهاتف", filtered_df["Téléphone"])
+            hex_color = st.color_picker("اختر اللون")
+            if st.button("🖌️ تلوين"):
                 try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(row["Employe"])
-                    cell = ws.find(str(row["Téléphone"]))
-                    ws.update_cell(cell.row, 11, tag_val)  # Tag
-                    ws.update_cell(cell.row, 9, tag_val)   # Inscription copy
-                    st.success("✅ تم حفظ التاغ")
-                    st.cache_data.clear()
+                    header = rows[0] if rows else EXPECTED_HEADERS
+                    color_cell = header.index("Tag") + 1
+                    tel_col = header.index("Téléphone") + 1
+                    for i, row in enumerate(rows[1:], start=2):
+                        if len(row) >= tel_col and row[tel_col - 1] == tel_color:
+                            ws.update_cell(i, color_cell, hex_color)
+                            st.success("✅ تم التلوين")
+                            st.cache_data.clear()
+                            break
                 except Exception as e:
-                    st.error(f"❌ خطأ أثناء حفظ التاغ: {e}")
+                    st.error(f"❌ خطأ أثناء الحفظ: {e}")
 
-            # رابط واتساب (أحسن من webbrowser على الكلاود)
-            if st.button("📲 إنشاء رابط واتساب", key=f"whatsapp_{i}"):
-                msg = urllib.parse.quote(
-                    f"Bonjour {row.get('Nom & Prénom','')}, c'est MegaFormation. "
-                    f"Nous vous contactons pour le suivi de votre formation."
-                )
-                whatsapp_url = f"https://wa.me/{row.get('Téléphone','')}?text={msg}"
-                st.link_button("فتح الدردشة في واتساب", whatsapp_url)
-
-# -------- Dashboard للإداري --------
-st.subheader("📊 لوحة التحكم الإدارية")
-if not df.empty:
-    stats = df.groupby("Employe", dropna=False).agg({
-        "Nom & Prénom": "count",
-        "Inscription": lambda x: (x.fillna("").astype(str).str.lower().isin(["oui","yes","1","true"]).sum())
-    }).rename(columns={"Nom & Prénom": "Clients", "Inscription": "Inscrits"})
-    stats["% تسجيل"] = (stats["Inscrits"] / stats["Clients"]).replace([pd.NA, pd.NaT, float("inf")], 0).fillna(0) * 100
-    stats["% تسجيل"] = stats["% تسجيل"].round(2)
-    st.dataframe(stats, use_container_width=True)
-else:
-    st.info("لا توجد بيانات بعد لعرض الإحصائيات.")
-
-# -------- إضافة موظف جديد --------
-st.subheader("👨‍💼 إدارة الموظفين")
-with st.form("add_employee_form"):
-    new_emp = st.text_input("👤 اسم الموظف الجديد")
-    add_emp = st.form_submit_button("➕ أضف الموظف")
-    if add_emp:
-        if not new_emp.strip():
-            st.warning("⚠️ أدخل اسمًا صالحًا")
-        else:
-            try:
-                sh = client.open_by_key(SPREADSHEET_ID)
-                if new_emp not in [ws.title for ws in sh.worksheets()]:
-                    sh.add_worksheet(title=new_emp, rows=200, cols=12)
-                    ws = sh.worksheet(new_emp)
-                    ws.update("1:1", [EXPECTED_HEADERS])
-                    st.success("✅ تمت إضافة الموظف")
-                    st.cache_data.clear()
-                else:
-                    st.warning("⚠️ الموظف موجود مسبقًا")
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء إنشاء ورقة الموظف: {e}")
-
-# -------- إضافة عميل جديد --------
-st.subheader("➕ إضافة عميل جديد")
-with st.form("add_client_form"):
-    col1, col2 = st.columns(2)
-    with col1:
-        nom = st.text_input("👤 الاسم الكامل")
-        tel = st.text_input("📞 الهاتف")
-        formation = st.text_input("📚 التكوين")
-    with col2:
-        contact_type = st.selectbox("📞 نوع التواصل", ["Visiteur","WhatsApp","Appel téléphonique","Social media"])
-        suivi_date = st.date_input("📆 تاريخ المتابعة", value=date.today())
-        employee_choice = st.selectbox("👨‍💼 الموظف", all_employees)
-
-    submitted = st.form_submit_button("📥 أضف العميل")
-    if submitted:
-        if not (nom.strip() and tel.strip() and formation.strip()):
-            st.error("❌ الرجاء ملء جميع الحقول الأساسية")
-        else:
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee_choice)
-                values = ws.get_all_values()
-                phones = set(str(r[1]).strip() for r in values[1:] if len(r) > 1 and str(r[1]).strip())
-                if tel.strip() in phones:
-                    st.error("❌ رقم الهاتف موجود مسبقًا")
-                else:
-                    today_str = date.today().strftime("%d/%m/%Y")
-                    suivi_str  = suivi_date.strftime("%d/%m/%Y")
-                    ws.append_row([nom.strip(), tel.strip(), contact_type, formation.strip(),
-                                   "", today_str, suivi_str, "", "", employee_choice, ""])
-                    st.success("✅ تم إضافة العميل")
-                    st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء إضافة العميل: {e}")
+        # ➕ إضافة عميل (تظهر دائمًا)
+        st.markdown("### ➕ أضف عميل جديد")
+        nom = st.text_input("الاسم و اللقب")
+        tel = st.text_input("رقم الهاتف")
+        type_contact = st.selectbox("نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
+        formation = st.text_input("التكوين")
+        if st.button("➕ أضف"):
+            if not nom or not tel:
+                st.warning("⚠️ الاسم أو الهاتف مفقود")
+            else:
+                try:
+                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    values = ws.get_all_values()
+                    # فحص تكرار الهاتف
+                    tel_idx = EXPECTED_HEADERS.index("Téléphone")
+                    existing = {r[tel_idx].strip() for r in values[1:] if len(r) > tel_idx and r[tel_idx].strip()}
+                    if tel in existing:
+                        st.warning("⚠️ الرقم موجود مسبقًا")
+                    else:
+                        date_ajout = datetime.now().strftime("%d/%m/%Y")
+                        ws.append_row([nom, tel, type_contact, formation, "", date_ajout, "", "", "", employee, ""])
+                        st.success("✅ تم إضافة العميل")
+                        st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء الإضافة: {e}")
