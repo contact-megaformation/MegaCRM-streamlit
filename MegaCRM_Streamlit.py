@@ -236,6 +236,47 @@ if global_phone.strip():
         st.markdown("---")
 
 # ================== لوحة الأدمن ==================
+# ================== لوحة الأدمن ==================
+if role == "أدمن":
+    st.subheader("📆 متابعة الأداء حسب الموظّف")
+
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        range_start = st.date_input("من تاريخ", value=(date.today() - pd.Timedelta(days=30)), key="adm_perf_from")
+    with col_d2:
+        range_end = st.date_input("إلى تاريخ", value=date.today(), key="adm_perf_to")
+
+    if range_start > range_end:
+        st.warning("⚠️ تاريخ البدء يجب أن يكون قبل تاريخ النهاية.")
+    else:
+        if df_all.empty:
+            st.info("لا توجد بيانات.")
+        else:
+            mask_period = df_all["DateAjout_dt"].dt.date.between(range_start, range_end)
+            df_period = df_all.loc[mask_period].copy()
+
+            # المتابَعين = السطور اللي Date de suivi معمّرة (أي تاريخ)
+            df_period["Followed"] = df_period["DateSuivi_dt"].notna()
+
+            perf = (
+                df_period.groupby("__sheet_name")
+                .agg(NewClients=("Nom & Prénom", "count"),
+                     Followed=("Followed", "sum"))
+                .rename_axis("Employe")
+                .reset_index()
+            )
+            perf["Remaining"] = perf["NewClients"] - perf["Followed"]
+
+            st.dataframe(perf, use_container_width=True)
+
+            if not perf.empty:
+                chart_df = perf.set_index("Employe")[["NewClients", "Followed", "Remaining"]]
+                st.bar_chart(chart_df, use_container_width=True)
+            else:
+                st.info("لا توجد إضافات جديدة في هذه المدة.")
+
+    st.markdown("---")
+    # … بقية قسم الأدمن (إضافة موظف/عميل) تتركها كما هي تحت هذا البلوك
 if role == "أدمن":
     st.subheader("👨‍💼 إدارة الموظفين")
 
