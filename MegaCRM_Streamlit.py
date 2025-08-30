@@ -141,7 +141,7 @@ def load_all_data():
     return big, all_employes
 
 df_all, all_employes = load_all_data()
-
+filtered_df = pd.DataFrame()  # يمنع NameError خارج فرع الموظّف
 # ===== أعمدة مشتقّة + جهّز أرقام للتكرار العالمي =====
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
