@@ -513,21 +513,4 @@ if not filtered_df.empty:
         wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
         st.link_button("📤 فتح واتساب", wa_url)
 
-# ===== إخفاء عناصر Streamlit/GitHub للزائرين (نخلي الـheader ظاهر) =====
-HIDE_STREAMLIT = """
-<style>
-#MainMenu {visibility: hidden !important;}
-footer {visibility: hidden !important;}
-.stAppDeployButton, .stDeployButton {display: none !important;}
-[data-testid="stDecoration"] {display: none !important;}
-[data-testid="stToolbar"] {display: none !important;}
-[data-testid="stStatusWidget"] {display: none !important;}
-.viewerBadge_container__1QSob, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {
-  display: none !important; visibility: hidden !important;
-}
-a[href*="github.com"] {display: none !important;}
-a[href*="streamlit.io"], a[href*="streamlit.app"] {display: none !important;}
-footer:empty {display: none !important;}
-</style>
-"""
-st.markdown(HIDE_STREAMLIT, unsafe_allow_html=True)
+
