@@ -246,49 +246,6 @@ if role == "أدمن":
                 st.warning("⚠️ الاسم فارغ أو الموظف موجود مسبقًا")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
-# ================== 📆 متابعة الأداء حسب الموظّف (جدد/متابَعين/متبقّي) ==================
-st.subheader("📆 متابعة الأداء حسب الموظّف")
-
-# اختيار المدة: افتراضياً آخر 30 يوم
-col_d1, col_d2 = st.columns(2)
-with col_d1:
-    range_start = st.date_input("من تاريخ", value=(date.today() - pd.Timedelta(days=30)))
-with col_d2:
-    range_end = st.date_input("إلى تاريخ", value=date.today())
-
-if range_start > range_end:
-    st.warning("⚠️ تاريخ البدء يجب أن يكون قبل تاريخ النهاية.")
-else:
-    if df_all.empty:
-        st.info("لا توجد بيانات.")
-    else:
-        # نشتغل فقط على العملاء المضافين خلال المدة المختارة
-        mask_period = df_all["DateAjout_dt"].dt.date.between(range_start, range_end)
-        df_period = df_all.loc[mask_period].copy()
-
-        # داخل نفس مجموعة الجدد: المتابَعين = اللي عندهم Date de suivi غير فارغ
-        df_period["Followed"] = df_period["DateSuivi_dt"].notna()
-
-        perf = (
-            df_period.groupby("__sheet_name")
-            .agg(
-                NewClients=("Nom & Prénom", "count"),
-                Followed=("Followed", "sum"),
-            )
-            .rename_axis("Employe")
-            .reset_index()
-        )
-        perf["Remaining"] = perf["NewClients"] - perf["Followed"]
-
-        st.markdown("#### 📋 جدول الأداء في المدة المحدّدة")
-        st.dataframe(perf, use_container_width=True)
-
-        # رسم بياني (أعمدة) للجدد/المتابَعين/المتبقي
-        if not perf.empty:
-            chart_df = perf.set_index("Employe")[["NewClients", "Followed", "Remaining"]]
-            st.bar_chart(chart_df, use_container_width=True)
-        else:
-            st.info("لا توجد إضافات جديدة في هذه المدة.")
     # ➕ إضافة عميل جديد لأي موظّف
     st.markdown("### ➕ إضافة عميل جديد (من الأدمن)")
     with st.form("admin_add_client_form"):
