@@ -15,7 +15,7 @@ st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="e
 st.markdown(
     """
     <div style='text-align:center;'>
-        <img src='logo.png' width='300'>
+        
         <h1 style='color:#333; margin-top: 8px;'>📊 CRM MEGA FORMATION - إدارة العملاء ميقا للتكوين</h1>
     </div>
     <hr>
