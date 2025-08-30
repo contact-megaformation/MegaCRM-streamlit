@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Alerts Fix + Editable Dates/Inscription + WhatsApp
+# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer
 
 import json
 import streamlit as st
@@ -9,17 +9,18 @@ from datetime import datetime, date
 from PIL import Image
 
 st.set_page_config(page_title="MegaCRM", layout="wide")
-# ===== Logo + عنوان =====
-try:
-    st.image("logo.png", use_container_width=False, width=200)
-except Exception:
-    st.warning("⚠️ Logo غير موجود في المسار")
 
+# ===== Logo + عنوان في الوسط =====
 st.markdown(
-    "<h1 style='text-align:center; color:#333;'>📊 MegaCRM - إدارة العملاء</h1>",
+    """
+    <div style='text-align:center;'>
+        <img src='logo.png' width='200'>
+        <h1 style='color:#333; margin-top: 8px;'>📊 MegaCRM - إدارة العملاء</h1>
+    </div>
+    <hr>
+    """,
     unsafe_allow_html=True
 )
-st.markdown("---")
 
 # ===== Google Sheets Auth (Secrets أولاً ثم ملف محلي) =====
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -56,7 +57,7 @@ def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
 def normalize_tn_phone(s: str) -> str:
-    """Keep digits only. If 8-digit Tunisian local, prefix 216. If already starts with 216, keep."""
+    """Digits only. If 8-digit Tunisian local -> prefix 216. If starts with 216 keep. Else return digits."""
     digits = "".join(ch for ch in str(s) if ch.isdigit())
     if digits.startswith("216"):
         return digits
@@ -69,7 +70,6 @@ def format_display_phone(s: str) -> str:
     return f"+{d}" if d else ""
 
 def find_row_by_phone(ws, phone_digits: str) -> int | None:
-    """Find row index (1-based) by normalized phone."""
     values = ws.get_all_values()
     if not values:
         return None
@@ -82,7 +82,18 @@ def find_row_by_phone(ws, phone_digits: str) -> int | None:
             return i
     return None
 
-# ===== تحميل كل أوراق الموظفين (آمن) =====
+# ===== Styling helpers =====
+def mark_alert_cell(val: str):
+    """Red background for alert cell only."""
+    return 'background-color: #ffcccc; color: #7a0000' if str(val).strip() != "" else ''
+
+def highlight_inscrit_row(row: pd.Series):
+    """Green background for full row if inscription is Inscrit/Oui."""
+    insc = str(row.get("Inscription", "")).strip().lower()
+    is_inscrit = insc in ("inscrit", "oui")
+    return ['background-color: #d6f5e8' if is_inscrit else '' for _ in row.index]
+
+# ===== تحميل كل أوراق الموظفين (نسخة آمنة) =====
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = client.open_by_key(SPREADSHEET_ID)
@@ -122,25 +133,25 @@ def load_all_data():
 
 df_all, all_employes = load_all_data()
 
-# ===== أعمدة مشتقّة (تنبيهات/تواريخ/تليفون) =====
+# ===== أعمدة مشتقّة + جهّز أرقام للتكرار العالمي =====
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
     df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
     df_all["Mois"] = df_all["DateAjout_dt"].dt.strftime("%m-%Y")
     today = datetime.now().date()
-    # Alerte_view = Alerte إذا موجود، وإلا لو تاريخ المتابعة اليوم → "⏰ متابعة اليوم"
     base_alert = df_all["Alerte"].fillna("").astype(str).str.strip()
     due_today = df_all["DateSuivi_dt"].dt.date.eq(today).fillna(False)
     df_all["Alerte_view"] = base_alert
     df_all.loc[base_alert.eq("") & due_today, "Alerte_view"] = "⏰ متابعة اليوم"
-    # تليفون بصيغة رقمية دولية لواتساب
     df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
+    ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
 else:
     df_all["Alerte_view"] = ""
     df_all["Mois"] = ""
     df_all["Téléphone_norm"] = ""
+    ALL_PHONES = set()
 
-# ===== الشعار =====
+# ===== الشعار في الـ sidebar (اختياري) =====
 try:
     st.sidebar.image(Image.open("logo.png"), use_container_width=True)
 except Exception:
@@ -151,8 +162,7 @@ role = st.sidebar.selectbox("الدور", ["موظف", "أدمن"])
 employee = st.sidebar.selectbox("اختر اسمك", all_employes) if role == "موظف" else None
 
 # ================== Dashboard ==================
-st.title("📊 MegaCRM - إدارة العملاء")
-
+st.subheader("لوحة إحصائيات سريعة")
 df_dash = df_all.copy()
 total_clients = len(df_dash)
 alerts_today = int(df_dash["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum()) if not df_dash.empty else 0
@@ -175,8 +185,7 @@ if not df_dash.empty:
     )
     grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
     grp["% تسجيل"] = grp["% تسجيل"].round(2)
-    st.subheader("📈 ملخص حسب الموظّف")
-    st.dataframe(grp)
+    st.dataframe(grp, use_container_width=True)
 
 # ================== لوحة الأدمن ==================
 if role == "أدمن":
@@ -198,7 +207,7 @@ if role == "أدمن":
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
-    # ➕ إضافة عميل جديد لأي موظّف (من الأدمن) مع تواريخ وتسجيل
+    # ➕ إضافة عميل جديد لأي موظّف
     st.markdown("### ➕ إضافة عميل جديد (من الأدمن)")
     with st.form("admin_add_client_form"):
         col1, col2 = st.columns(2)
@@ -220,12 +229,11 @@ if role == "أدمن":
             else:
                 try:
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee_choice)
-                    values = ws.get_all_values()
-                    tel_idx = EXPECTED_HEADERS.index("Téléphone")
-                    existing = {normalize_tn_phone(r[tel_idx]) for r in values[1:] if len(r) > tel_idx and r[tel_idx]}
                     tel_a = normalize_tn_phone(tel_a_raw)
-                    if tel_a in existing:
-                        st.warning("⚠️ رقم الهاتف موجود مسبقًا")
+
+                    # منع التكرار على مستوى كل النظام
+                    if tel_a in ALL_PHONES:
+                        st.warning("⚠️ رقم الهاتف موجود مسبقًا في النظام")
                     else:
                         insc_val = "Oui" if inscription_a == "Inscrit" else "Pas encore"
                         ws.append_row([
@@ -259,91 +267,101 @@ if role == "موظف" and employee:
         st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
         filtered_df = pd.DataFrame()
 
-    # ===== عرض العملاء مع Alerte_view =====
-    def color_alerte(val):
-        return 'background-color: red; color: white' if str(val).strip() != "" else ''
-
+    # ===== فلترة بالتكوين + بحث برقم الهاتف =====
     if not filtered_df.empty:
-        # استبدل عمود Alerte بالقيمة المحسوبة للعرض
-        filtered_df["Alerte"] = filtered_df["Alerte_view"]
-        display_cols = [c for c in EXPECTED_HEADERS if c != "Alerte"] + ["Alerte"]
-        display_cols = [c for c in display_cols if c in filtered_df.columns]
-        st.dataframe(
-            filtered_df[display_cols].drop(columns=["Mois"], errors="ignore")
-            .style.applymap(color_alerte, subset=["Alerte"])
-        )
-    else:
-        st.info("لا توجد بيانات في هذا الشهر.")
+        formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
+        formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
+        if formation_choice != "الكل":
+            filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-    # ===== فلترة عملاء لديهم تنبيهات (حسب Alerte_view) =====
+        phone_query = st.text_input("🔎 بحث برقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
+        if phone_query.strip():
+            q_norm = normalize_tn_phone(phone_query)
+            filtered_df["Téléphone_norm"] = filtered_df["Téléphone"].apply(normalize_tn_phone)
+            filtered_df = filtered_df[filtered_df["Téléphone_norm"] == q_norm]
+
+    # ===== عرض العملاء مع تلوين التنبيهات والأخضر للمسجلين =====
+    def render_table(df_disp: pd.DataFrame):
+        if df_disp.empty:
+            st.info("لا توجد بيانات في هذا الفلتر.")
+            return
+        _df = df_disp.copy()
+        if "Alerte_view" in _df.columns:
+            _df["Alerte"] = _df["Alerte_view"]
+        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
+        styled = (
+            _df[display_cols]
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"])
+        )
+        st.dataframe(styled, use_container_width=True)
+
+    st.markdown("### 📋 قائمة العملاء")
+    render_table(filtered_df)
+
+    # ===== فلترة عملاء لديهم تنبيهات =====
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
-        df_alerts = filtered_df[filtered_df["Alerte_view"].fillna("").astype(str).str.strip() != ""].copy()
-        if not df_alerts.empty:
-            df_alerts["Alerte"] = df_alerts["Alerte_view"]
-            st.dataframe(
-                df_alerts[[c for c in display_cols if c in df_alerts.columns]]
-                .style.applymap(color_alerte, subset=["Alerte"])
-            )
-        else:
-            st.info("لا توجد تنبيهات في هذا الفلتر.")
+        _df = filtered_df.copy()
+        if "Alerte_view" in _df.columns:
+            _df["Alerte"] = _df["Alerte_view"]
+        alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
+        st.markdown("### 🚨 عملاء مع تنبيهات")
+        render_table(alerts_df)
 
     # ===== ✏️ تعديل تاريخ الإضافة/المتابعة وحالة التسجيل =====
     if not df_emp.empty:
         st.markdown("### ✏️ تعديل بيانات عميل")
-        # لائحة أرقام للانتقاء (مع عرض جميل)
         df_emp["Téléphone_norm"] = df_emp["Téléphone"].apply(normalize_tn_phone)
         phone_choices = {
             f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
             for _, row in df_emp.iterrows()
             if str(row["Téléphone"]).strip() != ""
         }
-        chosen_key = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()))
-        chosen_phone = phone_choices.get(chosen_key, "")
+        if phone_choices:
+            chosen_key = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()))
+            chosen_phone = phone_choices.get(chosen_key, "")
 
-        # قيم حالية
-        cur_row = df_emp[df_emp["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
-        cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
-        cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and pd.notna(cur_row["Date de suivi"]) and str(cur_row["Date de suivi"]).strip() else date.today()
-        cur_insc = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
+            cur_row = df_emp[df_emp["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
+            cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
+            cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
+            cur_insc = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
 
-        colE1, colE2, colE3 = st.columns(3)
-        with colE1:
-            new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key="edit_ajout")
-        with colE2:
-            new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key="edit_suivi")
-        with colE3:
-            new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key="edit_insc")
+            colE1, colE2, colE3 = st.columns(3)
+            with colE1:
+                new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key="edit_ajout")
+            with colE2:
+                new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key="edit_suivi")
+            with colE3:
+                new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key="edit_insc")
 
-        if st.button("💾 حفظ التعديلات"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                row_idx = find_row_by_phone(ws, chosen_phone)
-                if not row_idx:
-                    st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
-                else:
-                    # أعمدة
-                    col_ajout = EXPECTED_HEADERS.index("Date ajout") + 1
-                    col_suivi = EXPECTED_HEADERS.index("Date de suivi") + 1
-                    col_insc = EXPECTED_HEADERS.index("Inscription") + 1
-                    ws.update_cell(row_idx, col_ajout, fmt_date(new_ajout))
-                    ws.update_cell(row_idx, col_suivi, fmt_date(new_suivi))
-                    ws.update_cell(row_idx, col_insc, ("Oui" if new_insc == "Inscrit" else "Pas encore"))
-                    st.success("✅ تم حفظ التعديلات")
-                    st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء التعديل: {e}")
+            if st.button("💾 حفظ التعديلات"):
+                try:
+                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    row_idx = find_row_by_phone(ws, chosen_phone)
+                    if not row_idx:
+                        st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
+                    else:
+                        col_ajout = EXPECTED_HEADERS.index("Date ajout") + 1
+                        col_suivi = EXPECTED_HEADERS.index("Date de suivi") + 1
+                        col_insc = EXPECTED_HEADERS.index("Inscription") + 1
+                        ws.update_cell(row_idx, col_ajout, fmt_date(new_ajout))
+                        ws.update_cell(row_idx, col_suivi, fmt_date(new_suivi))
+                        ws.update_cell(row_idx, col_insc, ("Oui" if new_insc == "Inscrit" else "Pas encore"))
+                        st.success("✅ تم حفظ التعديلات")
+                        st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء التعديل: {e}")
 
     # ===== 📝 ملاحظات =====
     if not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة")
-        # اختر هاتف من نفس الفلتر الشهري لو موجودين
         scope_df = filtered_df if not filtered_df.empty else df_emp
+        scope_df = scope_df.copy()
         scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
         tel_to_update_key = st.selectbox(
             "اختر العميل",
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()]
         )
-        # استخرج الهاتف المختار
         tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
         new_note = st.text_area("🗒️ ملاحظة جديدة")
         if st.button("📌 أضف الملاحظة"):
@@ -370,6 +388,7 @@ if role == "موظف" and employee:
     if not df_emp.empty:
         st.markdown("### 🎨 اختر لون/Tag للعميل")
         scope_df = filtered_df if not filtered_df.empty else df_emp
+        scope_df = scope_df.copy()
         scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
         tel_color_key = st.selectbox(
             "اختر العميل",
@@ -413,12 +432,11 @@ if role == "موظف" and employee:
             else:
                 try:
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                    values = ws.get_all_values()
-                    tel_idx = EXPECTED_HEADERS.index("Téléphone")
-                    existing = {normalize_tn_phone(r[tel_idx]) for r in values[1:] if len(r) > tel_idx and r[tel_idx]}
                     tel = normalize_tn_phone(tel_raw)
-                    if tel in existing:
-                        st.warning("⚠️ الرقم موجود مسبقًا")
+
+                    # منع التكرار على مستوى كل النظام
+                    if tel in ALL_PHONES:
+                        st.warning("⚠️ الرقم موجود مسبقًا في النظام")
                     else:
                         insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
                         ws.append_row([
@@ -433,31 +451,34 @@ if role == "موظف" and employee:
     # ===== WhatsApp زرّ مباشر =====
     st.markdown("### 📲 تواصل عبر واتساب")
     if not df_emp.empty:
-        df_emp["Téléphone_norm"] = df_emp["Téléphone"].apply(normalize_tn_phone)
+        df_emp_w = df_emp.copy()
+        df_emp_w["Téléphone_norm"] = df_emp_w["Téléphone"].apply(normalize_tn_phone)
         choice = st.selectbox(
             "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in df_emp.iterrows()],
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in df_emp_w.iterrows()],
             key="wa_select"
         )
         tel_norm = normalize_tn_phone(choice.split("—")[-1])
-        default_msg = f"Bonjour, c'est MegaFormation. On vous contacte pour le suivi de votre formation."
+        default_msg = "Bonjour, c'est MegaFormation. On vous contacte pour le suivi de votre formation."
         msg = st.text_input("نص الرسالة", value=default_msg)
-        if st.button("📤 إرسال واتساب"):
-            from urllib.parse import quote
-            wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
-            st.link_button("فتح واتساب", wa_url)
-# 🔒 إخفاء كل ما يتعلق بالـ GitHub badge (الصورة + الاسم)
-HIDE_VIEWER_BADGE = """
+        from urllib.parse import quote
+        wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
+        st.link_button("📤 فتح واتساب", wa_url)
+
+# ===== إخفاء عناصر Streamlit/GitHub للزائرين =====
+HIDE_STREAMLIT = """
 <style>
-.viewerBadge_container__1QSob,
-.viewerBadge_link__1S137,
-.viewerBadge_text__1JaDK {
-    display: none !important;
-    visibility: hidden !important;
-}
+#MainMenu {visibility: hidden !important;}
+header {visibility: hidden !important;}
+footer {visibility: hidden !important;}
+.stAppDeployButton, .stDeployButton {display: none !important;}
+[data-testid="stDecoration"] {display: none !important;}
+[data-testid="stToolbar"] {display: none !important;}
+[data-testid="stStatusWidget"] {display: none !important;}
+.viewerBadge_container__1QSob, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {display: none !important; visibility: hidden !important;}
+a[href*="github.com"] {display: none !important;}
+a[href*="streamlit.io"], a[href*="streamlit.app"] {display: none !important;}
+footer:empty {display: none !important;}
 </style>
 """
-st.markdown(HIDE_VIEWER_BADGE, unsafe_allow_html=True)
-
-
-
+st.markdown(HIDE_STREAMLIT, unsafe_allow_html=True)
