@@ -327,6 +327,7 @@ if role == "موظف" and employee:
             _df[display_cols]
             .style.apply(highlight_inscrit_row, axis=1)
             .applymap(mark_alert_cell, subset=["Alerte"])
+            .applymap(color_tag, subset=["Tag"])
         )
         st.dataframe(styled, use_container_width=True)
 
