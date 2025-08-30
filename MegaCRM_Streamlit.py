@@ -8,14 +8,15 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
 
-st.set_page_config(page_title="MegaCRM", layout="wide")
+# ========== Page config: نخلّي الـsidebar يتفتح وحدو ونخلي الـheader ظاهر ==========
+st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
 # ===== Logo + عنوان في الوسط =====
 st.markdown(
     """
     <div style='text-align:center;'>
-        <img src='logo.png' width='200'>
-        <h1 style='color:#333; margin-top: 8px;'>📊 MegaCRM - إدارة العملاء</h1>
+        <img src='logo.png' width='300'>
+        <h1 style='color:#333; margin-top: 8px;'>📊 CRM MEGA FORMATION - إدارة العملاء ميقا للتكوين</h1>
     </div>
     <hr>
     """,
@@ -34,6 +35,7 @@ def make_client_and_sheet_id():
             sa_info = json.loads(sa)
         else:
             raise ValueError("Bad gcp_service_account format")
+
         creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
         client = gspread.authorize(creds)
         sheet_id = st.secrets["SPREADSHEET_ID"]
@@ -83,6 +85,12 @@ def find_row_by_phone(ws, phone_digits: str) -> int | None:
     return None
 
 # ===== Styling helpers =====
+# 🎨 تلوين حسب قيمة Tag (كود Hex)
+def color_tag(val):
+    if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
+        return f"background-color: {val}; color: white;"
+    return ""
+
 def mark_alert_cell(val: str):
     """Red background for alert cell only."""
     return 'background-color: #ffcccc; color: #7a0000' if str(val).strip() != "" else ''
@@ -108,6 +116,7 @@ def load_all_data():
             ws.update("1:1", [EXPECTED_HEADERS])
             rows = ws.get_all_values()
 
+        # تأكيد الهيدر
         try:
             ws.update("1:1", [EXPECTED_HEADERS])
             rows = ws.get_all_values()
@@ -138,11 +147,14 @@ if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
     df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
     df_all["Mois"] = df_all["DateAjout_dt"].dt.strftime("%m-%Y")
+
     today = datetime.now().date()
     base_alert = df_all["Alerte"].fillna("").astype(str).str.strip()
     due_today = df_all["DateSuivi_dt"].dt.date.eq(today).fillna(False)
+
     df_all["Alerte_view"] = base_alert
     df_all.loc[base_alert.eq("") & due_today, "Alerte_view"] = "⏰ متابعة اليوم"
+
     df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
     ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
 else:
@@ -186,6 +198,42 @@ if not df_dash.empty:
     grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
     grp["% تسجيل"] = grp["% تسجيل"].round(2)
     st.dataframe(grp, use_container_width=True)
+
+# ================== 🔎 بحث عام برقم الهاتف (على كامل الباز) ==================
+st.subheader("🔎 بحث عام برقم الهاتف")
+global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
+
+if global_phone.strip():
+    q_norm = normalize_tn_phone(global_phone)
+
+    # حضّر داتا موحّدة للعرض
+    search_df = df_all.copy()
+    if "Téléphone_norm" not in search_df.columns:
+        search_df["Téléphone_norm"] = search_df["Téléphone"].apply(normalize_tn_phone)
+
+    # عوّض Alerte بالعرض المحسوب
+    if "Alerte_view" in search_df.columns:
+        search_df["Alerte"] = search_df["Alerte_view"]
+
+    # فلترة على كامل الباز
+    search_df = search_df[search_df["Téléphone_norm"] == q_norm]
+
+    if search_df.empty:
+        st.info("❕ ما لقيتش عميل بهذا الرقم في كامل النظام.")
+    else:
+        st.success(f"✅ تم العثور على {len(search_df)} نتيجة (على كامل الباز).")
+        display_cols = [c for c in EXPECTED_HEADERS if c in search_df.columns]
+        # نضيف اسم الموظّف باش تعرف الورقة متاع من
+        if "Employe" in search_df.columns and "Employe" not in display_cols:
+            display_cols.append("Employe")
+
+        styled_global = (
+            search_df[display_cols]
+            .style.apply(highlight_inscrit_row, axis=1)  # الصف الأخضر للمسجّلين
+            .applymap(mark_alert_cell, subset=["Alerte"])  # خلفية حمراء للتنبيه
+        )
+        st.dataframe(styled_global, use_container_width=True)
+        st.markdown("---")
 
 # ================== لوحة الأدمن ==================
 if role == "أدمن":
@@ -274,12 +322,6 @@ if role == "موظف" and employee:
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-        phone_query = st.text_input("🔎 بحث برقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
-        if phone_query.strip():
-            q_norm = normalize_tn_phone(phone_query)
-            filtered_df["Téléphone_norm"] = filtered_df["Téléphone"].apply(normalize_tn_phone)
-            filtered_df = filtered_df[filtered_df["Téléphone_norm"] == q_norm]
-
     # ===== عرض العملاء مع تلوين التنبيهات والأخضر للمسجلين =====
     def render_table(df_disp: pd.DataFrame):
         if df_disp.empty:
@@ -293,6 +335,7 @@ if role == "موظف" and employee:
             _df[display_cols]
             .style.apply(highlight_inscrit_row, axis=1)
             .applymap(mark_alert_cell, subset=["Alerte"])
+            .applymap(color_tag, subset=["Tag"])
         )
         st.dataframe(styled, use_container_width=True)
 
@@ -465,5 +508,4 @@ if role == "موظف" and employee:
         wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
         st.link_button("📤 فتح واتساب", wa_url)
 
-# ===== إخفاء عناصر Streamlit/GitHub للزائرين =====
-
+# ===== إخفاء عناصر Streamlit/GitHub للزائرين (نخلي الـheader ظاهر) =====
