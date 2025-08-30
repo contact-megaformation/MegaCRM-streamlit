@@ -186,7 +186,41 @@ if not df_dash.empty:
     grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
     grp["% تسجيل"] = grp["% تسجيل"].round(2)
     st.dataframe(grp, use_container_width=True)
+# ================== 🔎 بحث عام برقم الهاتف (على كامل الباز) ==================
+st.subheader("🔎 بحث عام برقم الهاتف")
+global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
 
+if global_phone.strip():
+    q_norm = normalize_tn_phone(global_phone)
+
+    # حضّر داتا موحّدة للعرض
+    search_df = df_all.copy()
+    if "Téléphone_norm" not in search_df.columns:
+        search_df["Téléphone_norm"] = search_df["Téléphone"].apply(normalize_tn_phone)
+
+    # عوّض Alerte بالعرض المحسوب
+    if "Alerte_view" in search_df.columns:
+        search_df["Alerte"] = search_df["Alerte_view"]
+
+    # فلترة على كامل الباز
+    search_df = search_df[search_df["Téléphone_norm"] == q_norm]
+
+    if search_df.empty:
+        st.info("❕ ما لقيتش عميل بهذا الرقم في كامل النظام.")
+    else:
+        st.success(f"✅ تم العثور على {len(search_df)} نتيجة (على كامل الباز).")
+        display_cols = [c for c in EXPECTED_HEADERS if c in search_df.columns]
+        # نضيف اسم الموظّف باش تعرف الورقة متاع من
+        if "Employe" in search_df.columns and "Employe" not in display_cols:
+            display_cols.append("Employe")
+
+        styled_global = (
+            search_df[display_cols]
+            .style.apply(highlight_inscrit_row, axis=1)  # الصف الأخضر للمسجّلين
+            .applymap(mark_alert_cell, subset=["Alerte"])  # خلفية حمراء للتنبيه
+        )
+        st.dataframe(styled_global, use_container_width=True)
+        st.markdown("---")
 # ================== لوحة الأدمن ==================
 if role == "أدمن":
     st.subheader("👨‍💼 إدارة الموظفين")
@@ -274,11 +308,6 @@ if role == "موظف" and employee:
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-        phone_query = st.text_input("🔎 بحث برقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
-        if phone_query.strip():
-            q_norm = normalize_tn_phone(phone_query)
-            filtered_df["Téléphone_norm"] = filtered_df["Téléphone"].apply(normalize_tn_phone)
-            filtered_df = filtered_df[filtered_df["Téléphone_norm"] == q_norm]
 
     # ===== عرض العملاء مع تلوين التنبيهات والأخضر للمسجلين =====
     def render_table(df_disp: pd.DataFrame):
