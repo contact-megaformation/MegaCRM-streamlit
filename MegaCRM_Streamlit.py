@@ -83,6 +83,11 @@ def find_row_by_phone(ws, phone_digits: str) -> int | None:
     return None
 
 # ===== Styling helpers =====
+# 🎨 تلوين حسب قيمة Tag (كود Hex)
+def color_tag(val):
+    if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
+        return f"background-color: {val}; color: white;"
+    return ""
 def mark_alert_cell(val: str):
     """Red background for alert cell only."""
     return 'background-color: #ffcccc; color: #7a0000' if str(val).strip() != "" else ''
