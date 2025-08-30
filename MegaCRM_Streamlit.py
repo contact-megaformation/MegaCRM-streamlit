@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer
+# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Admin/Employee Counters
 
 import json
 import streamlit as st
@@ -8,7 +8,8 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
 
-st.set_page_config(page_title="MegaCRM", layout="wide")
+# ========== Page config: رجّعنا الـ header وفتحنا الـsidebar ==========
+st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
 # ===== Logo + عنوان في الوسط =====
 st.markdown(
@@ -83,17 +84,15 @@ def find_row_by_phone(ws, phone_digits: str) -> int | None:
     return None
 
 # ===== Styling helpers =====
-# 🎨 تلوين حسب قيمة Tag (كود Hex)
 def color_tag(val):
     if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
         return f"background-color: {val}; color: white;"
     return ""
+
 def mark_alert_cell(val: str):
-    """Red background for alert cell only."""
     return 'background-color: #ffcccc; color: #7a0000' if str(val).strip() != "" else ''
 
 def highlight_inscrit_row(row: pd.Series):
-    """Green background for full row if inscription is Inscrit/Oui."""
     insc = str(row.get("Inscription", "")).strip().lower()
     is_inscrit = insc in ("inscrit", "oui")
     return ['background-color: #d6f5e8' if is_inscrit else '' for _ in row.index]
@@ -123,7 +122,7 @@ def load_all_data():
         fixed_rows = []
         for r in data_rows:
             r = list(r) if r is not None else []
-            if len(r) < len(EXPECTED_HEADERS):
+            if len(r) < len(EXPECTED_HEADERS)):
                 r = r + [""] * (len(EXPECTED_HEADERS) - len(r))
             else:
                 r = r[:len(EXPECTED_HEADERS)]
@@ -199,16 +198,13 @@ global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محل�
 if global_phone.strip():
     q_norm = normalize_tn_phone(global_phone)
 
-    # حضّر داتا موحّدة للعرض
     search_df = df_all.copy()
     if "Téléphone_norm" not in search_df.columns:
         search_df["Téléphone_norm"] = search_df["Téléphone"].apply(normalize_tn_phone)
 
-    # عوّض Alerte بالعرض المحسوب
     if "Alerte_view" in search_df.columns:
         search_df["Alerte"] = search_df["Alerte_view"]
 
-    # فلترة على كامل الباز
     search_df = search_df[search_df["Téléphone_norm"] == q_norm]
 
     if search_df.empty:
@@ -216,17 +212,55 @@ if global_phone.strip():
     else:
         st.success(f"✅ تم العثور على {len(search_df)} نتيجة (على كامل الباز).")
         display_cols = [c for c in EXPECTED_HEADERS if c in search_df.columns]
-        # نضيف اسم الموظّف باش تعرف الورقة متاع من
         if "Employe" in search_df.columns and "Employe" not in display_cols:
             display_cols.append("Employe")
 
         styled_global = (
             search_df[display_cols]
-            .style.apply(highlight_inscrit_row, axis=1)  # الصف الأخضر للمسجّلين
-            .applymap(mark_alert_cell, subset=["Alerte"])  # خلفية حمراء للتنبيه
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"])
+            .applymap(color_tag, subset=["Tag"])
         )
         st.dataframe(styled_global, use_container_width=True)
         st.markdown("---")
+
+# ================== 📆 متابعة الأداء حسب الموظّف (للأدمن فقط) ==================
+if role == "أدمن":
+    st.subheader("📆 متابعة الأداء حسب الموظّف")
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        range_start = st.date_input("من تاريخ", value=(date.today() - pd.Timedelta(days=30)), key="adm_perf_from")
+    with col_d2:
+        range_end = st.date_input("إلى تاريخ", value=date.today(), key="adm_perf_to")
+
+    if range_start > range_end:
+        st.warning("⚠️ تاريخ البدء يجب أن يكون قبل تاريخ النهاية.")
+    else:
+        if df_all.empty:
+            st.info("لا توجد بيانات.")
+        else:
+            mask_period = df_all["DateAjout_dt"].dt.date.between(range_start, range_end)
+            df_period = df_all.loc[mask_period].copy()
+
+            df_period["Followed"] = df_period["DateSuivi_dt"].notna()
+
+            perf = (
+                df_period.groupby("__sheet_name")
+                .agg(NewClients=("Nom & Prénom", "count"),
+                     Followed=("Followed", "sum"))
+                .rename_axis("Employe")
+                .reset_index()
+            )
+            perf["Remaining"] = perf["NewClients"] - perf["Followed"]
+
+            st.dataframe(perf, use_container_width=True)
+
+            if not perf.empty:
+                chart_df = perf.set_index("Employe")[["NewClients", "Followed", "Remaining"]]
+                st.bar_chart(chart_df, use_container_width=True)
+
+    st.markdown("---")
+
 # ================== لوحة الأدمن ==================
 if role == "أدمن":
     st.subheader("👨‍💼 إدارة الموظفين")
@@ -246,6 +280,7 @@ if role == "أدمن":
                 st.warning("⚠️ الاسم فارغ أو الموظف موجود مسبقًا")
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
+
     # ➕ إضافة عميل جديد لأي موظّف
     st.markdown("### ➕ إضافة عميل جديد (من الأدمن)")
     with st.form("admin_add_client_form"):
@@ -270,7 +305,6 @@ if role == "أدمن":
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee_choice)
                     tel_a = normalize_tn_phone(tel_a_raw)
 
-                    # منع التكرار على مستوى كل النظام
                     if tel_a in ALL_PHONES:
                         st.warning("⚠️ رقم الهاتف موجود مسبقًا في النظام")
                     else:
@@ -295,6 +329,31 @@ if role == "موظف" and employee:
     st.subheader(f"📁 لوحة {employee}")
     df_emp = df_all[df_all["__sheet_name"] == employee].copy()
 
+    # ===== مؤشّر موظّف: عدد المضافين في تاريخ معيّن والمتبقّي بلا متابعة =====
+    st.subheader("📆 متابعاتي لليوم (أو تاريخ تختارو)")
+    emp_date = st.date_input("اختر التاريخ", value=date.today(), key="emp_counter_date")
+
+    emp_df_all = df_all[df_all["__sheet_name"] == employee].copy()
+    emp_df_all["AjoutDate"] = emp_df_all["DateAjout_dt"].dt.date
+    emp_added_on_day = emp_df_all[emp_df_all["AjoutDate"] == emp_date].copy()
+
+    followed_mask = emp_added_on_day["DateSuivi_dt"].notna()
+    added_count = len(emp_added_on_day)
+    followed_count = int(followed_mask.sum())
+    remaining_count = added_count - followed_count
+    remaining_df = emp_added_on_day[~followed_mask][["Nom & Prénom", "Téléphone", "Formation", "Inscription"]]
+
+    cA, cB, cC = st.columns(3)
+    with cA: st.metric("➕ مضافين في التاريخ", f"{added_count}")
+    with cB: st.metric("✅ تمّت متابعتهم", f"{followed_count}")
+    with cC: st.metric("⏳ المتبقّي للمتابعة", f"{remaining_count}")
+
+    if not remaining_df.empty:
+        st.markdown("#### العملاء المتبقّين للمتابعة في هذا التاريخ")
+        st.dataframe(remaining_df, use_container_width=True)
+    else:
+        st.caption("لا يوجد متبقّون للمتابعة في هذا التاريخ.")
+
     # ===== فلترة بالشهر =====
     if not df_emp.empty:
         df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
@@ -306,15 +365,14 @@ if role == "موظف" and employee:
         st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
         filtered_df = pd.DataFrame()
 
-    # ===== فلترة بالتكوين + بحث برقم الهاتف =====
+    # ===== فلترة بالتكوين =====
     if not filtered_df.empty:
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-
-    # ===== عرض العملاء مع تلوين التنبيهات والأخضر للمسجلين =====
+    # ===== عرض العملاء مع تلوين =====
     def render_table(df_disp: pd.DataFrame):
         if df_disp.empty:
             st.info("لا توجد بيانات في هذا الفلتر.")
@@ -334,7 +392,7 @@ if role == "موظف" and employee:
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
-    # ===== فلترة عملاء لديهم تنبيهات =====
+    # ===== عملاء لديهم تنبيهات =====
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
         _df = filtered_df.copy()
         if "Alerte_view" in _df.columns:
@@ -446,7 +504,7 @@ if role == "موظف" and employee:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الحفظ: {e}")
 
-    # ===== ➕ إضافة عميل جديد (الموظف) مع تاريخي الإضافة/المتابعة والتسجيل =====
+    # ===== ➕ إضافة عميل جديد (الموظف) =====
     st.markdown("### ➕ أضف عميل جديد")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
@@ -469,7 +527,6 @@ if role == "موظف" and employee:
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
                     tel = normalize_tn_phone(tel_raw)
 
-                    # منع التكرار على مستوى كل النظام
                     if tel in ALL_PHONES:
                         st.warning("⚠️ الرقم موجود مسبقًا في النظام")
                     else:
@@ -500,17 +557,18 @@ if role == "موظف" and employee:
         wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
         st.link_button("📤 فتح واتساب", wa_url)
 
-# ===== إخفاء عناصر Streamlit/GitHub للزائرين =====
+# ===== إخفاء عناصر Streamlit/GitHub للزائرين (ونبقي header ظاهر) =====
 HIDE_STREAMLIT = """
 <style>
 #MainMenu {visibility: hidden !important;}
-header {visibility: hidden !important;}
 footer {visibility: hidden !important;}
 .stAppDeployButton, .stDeployButton {display: none !important;}
 [data-testid="stDecoration"] {display: none !important;}
 [data-testid="stToolbar"] {display: none !important;}
 [data-testid="stStatusWidget"] {display: none !important;}
-.viewerBadge_container__1QSob, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {display: none !important; visibility: hidden !important;}
+.viewerBadge_container__1QSob, .viewerBadge_link__1S137, .viewerBadge_text__1JaDK {
+  display: none !important; visibility: hidden !important;
+}
 a[href*="github.com"] {display: none !important;}
 a[href*="streamlit.io"], a[href*="streamlit.app"] {display: none !important;}
 footer:empty {display: none !important;}
