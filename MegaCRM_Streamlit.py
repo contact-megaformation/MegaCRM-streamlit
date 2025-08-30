@@ -311,6 +311,14 @@ if role == "موظف" and employee:
         df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
         month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
         filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
+# ===== عدّاد: المضافين بلا ملاحظات (حسب Date ajout في الفلتر الحالي) =====
+if not filtered_df.empty:
+    pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
+    pending_no_notes = int(pending_mask.sum())
+
+    st.markdown("### 📊 متابعتك")
+    st.metric("⏳ مضافين بلا ملاحظات", pending_no_notes)
+
     else:
         st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
         filtered_df = pd.DataFrame()
