@@ -352,12 +352,6 @@ if role == "موظف" and employee:
         df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
         month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
         filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
-    else:
-        st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
-        filtered_df = pd.DataFrame()
-    else:
-        st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
-        filtered_df = pd.DataFrame()
 
     # >>> هنا تلصق الكود الجديد متاع الإحصائيات للموظّف <<<
     # ===== مؤشرات للموظّف: مضافين/تمّ التواصل/في الانتظار (حسب Date ajout) =====
