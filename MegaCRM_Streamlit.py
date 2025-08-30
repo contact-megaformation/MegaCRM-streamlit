@@ -386,6 +386,14 @@ if role == "موظف" and employee:
             .applymap(color_tag, subset=["Tag"])
         )
         st.dataframe(styled, use_container_width=True)
+# ===== عدّاد: المضافين بلا ملاحظات (حسب Date ajout في الفلتر الحالي) =====
+if not filtered_df.empty:
+    # أي صفّ ما فيهـاش Remarque يعتبر "مازال ما تتابعش"
+    pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
+    pending_no_notes = int(pending_mask.sum())
+
+    st.markdown("### 📊 متابعتك")
+    st.metric("⏳ مضافين بلا ملاحظات", pending_no_notes)
 
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
