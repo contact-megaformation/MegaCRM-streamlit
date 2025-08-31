@@ -156,6 +156,16 @@ if not df_all.empty:
 
     df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
     ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
+# ===== تنظيف بيانات العملاء المسجّلين =====
+if not df_all.empty:
+    df_all["Inscription_norm"] = df_all["Inscription"].fillna("").astype(str).str.strip().str.lower()
+    
+    # العملاء المسجلين (Inscrit / Oui)
+    inscrit_mask = df_all["Inscription_norm"].isin(["oui", "inscrit"])
+    
+    # نفرغ تاريخ المتابعة والتنبيه للمسجّلين
+    df_all.loc[inscrit_mask, "Date de suivi"] = ""
+    df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
     df_all["Alerte_view"] = ""
     df_all["Mois"] = ""
