@@ -301,7 +301,33 @@ if role == "أدمن":
                         st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
+    # ===== 🔁 نقل عميل بين الموظفين (للأدمن) =====
+    st.markdown("### 🔁 نقل عميل بين الموظفين")
+    colRA, colRB = st.columns(2)
+    with colRA:
+        src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src_admin")
+    with colRB:
+        dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst_admin")
 
+    # حمّل داتا المصدر فقط للعرض والاختيار
+    df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
+    if df_src.empty:
+        st.info("لا يوجد عملاء في ورقة هذا الموظّف.")
+    else:
+        df_src["_tel_norm"] = df_src["Téléphone"].apply(normalize_tn_phone)
+        pick = st.selectbox(
+            "اختر العميل للنقل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in df_src.iterrows()],
+            key="reassign_pick_admin"
+        )
+        phone_pick = normalize_tn_phone(pick.split("—")[-1])
+
+        if st.button("🚚 نقل الآن", key="do_reassign_admin"):
+            ok, msg = reassign_client(src_emp, dst_emp, phone_pick)
+            if ok:
+                st.success(msg)
+            else:
+                st.warning(msg)
     # 🗑️ حذف موظف (تنبيه فقط)
     st.markdown("### 🗑️ حذف موظف")
     emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes, key="delete_emp")
