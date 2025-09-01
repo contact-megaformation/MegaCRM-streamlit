@@ -234,51 +234,7 @@ if global_phone.strip():
 # ================== لوحة الأدمــن ==================
 if role == "أدمن":
     st.subheader("👨‍💼 إدارة الموظفين")
-    # ===== 🔁 نقل عميل بين الموظفين =====
-    st.markdown("### 🔁 نقل عميل بين الموظفين")
-
-    colRA, colRB = st.columns(2)
-    with colRA:
-        src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
-    with colRB:
-        dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
-
-    df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
-    if df_src.empty:
-        st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
-    else:
-        df_src["_tel_norm"] = df_src["Téléphone"].apply(normalize_tn_phone)
-        pick = st.selectbox(
-            "اختر العميل للنقل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
-            key="reassign_pick"
-        )
-        phone_pick = normalize_tn_phone(pick.split("—")[-1])
-
-        if st.button("🚚 نقل الآن"):
-            try:
-                sh = client.open_by_key(SPREADSHEET_ID)
-                ws_src = sh.worksheet(src_emp)
-                ws_dst = sh.worksheet(dst_emp)
-
-                # نلقاو الصفّ بالهاتف
-                row_idx = find_row_by_phone(ws_src, phone_pick)
-                if not row_idx:
-                    st.error("❌ لم يتم العثور على هذا العميل في ورقة المصدر.")
-                else:
-                    row_values = ws_src.row_values(row_idx)
-                    # عدّل حقل Employe
-                    if len(row_values) < len(EXPECTED_HEADERS):
-                        row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
-                    row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                    # أضف في الوجهة
-                    ws_dst.append_row(row_values)
-                    # امسح من المصدر
-                    ws_src.delete_rows(row_idx)
-                    st.success(f"✅ تم نقل العميل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
-                    st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء النقل: {e}")
+   
     # ➕ إضافة موظف
     st.markdown("### ➕ إضافة موظف")
     new_emp = st.text_input("اسم الموظف الجديد")
@@ -330,7 +286,51 @@ if role == "أدمن":
                         st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
+ # ===== 🔁 نقل عميل بين الموظفين =====
+    st.markdown("### 🔁 نقل عميل بين الموظفين")
 
+    colRA, colRB = st.columns(2)
+    with colRA:
+        src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
+    with colRB:
+        dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
+
+    df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
+    if df_src.empty:
+        st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+    else:
+        df_src["_tel_norm"] = df_src["Téléphone"].apply(normalize_tn_phone)
+        pick = st.selectbox(
+            "اختر العميل للنقل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
+            key="reassign_pick"
+        )
+        phone_pick = normalize_tn_phone(pick.split("—")[-1])
+
+        if st.button("🚚 نقل الآن"):
+            try:
+                sh = client.open_by_key(SPREADSHEET_ID)
+                ws_src = sh.worksheet(src_emp)
+                ws_dst = sh.worksheet(dst_emp)
+
+                # نلقاو الصفّ بالهاتف
+                row_idx = find_row_by_phone(ws_src, phone_pick)
+                if not row_idx:
+                    st.error("❌ لم يتم العثور على هذا العميل في ورقة المصدر.")
+                else:
+                    row_values = ws_src.row_values(row_idx)
+                    # عدّل حقل Employe
+                    if len(row_values) < len(EXPECTED_HEADERS):
+                        row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
+                    row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                    # أضف في الوجهة
+                    ws_dst.append_row(row_values)
+                    # امسح من المصدر
+                    ws_src.delete_rows(row_idx)
+                    st.success(f"✅ تم نقل العميل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
+                    st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء النقل: {e}")
     # 🗑️ حذف موظف (تنبيه)
     st.markdown("### 🗑️ حذف موظف")
     emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes, key="delete_emp")
