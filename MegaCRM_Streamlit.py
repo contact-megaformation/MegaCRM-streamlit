@@ -435,7 +435,6 @@ if role == "موظف" and employee and not df_emp.empty:
         cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
         cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
         cur_insc = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
-        cur_form = str(cur_row["Formation"]).strip().lower() if cur_row is not None else ""
         cur_remark = str(cur_row["Remarque"]) if cur_row is not None else ""
 
         # الاسم والهاتف
