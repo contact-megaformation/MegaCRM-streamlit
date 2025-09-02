@@ -180,7 +180,7 @@ except Exception:
 role = st.sidebar.selectbox("الدور", ["موظف", "أدمن"])
 employee = st.sidebar.selectbox("اختر اسمك", all_employes) if role == "موظف" else None
 
-# ================== Dashboard عام ==================
+# ================== Dashboard ==================
 st.subheader("لوحة إحصائيات سريعة")
 df_dash = df_all.copy()
 total_clients = len(df_dash)
@@ -190,18 +190,36 @@ registered = int((reg_col == "oui").sum()) if not df_dash.empty else 0
 rate = round((registered / total_clients) * 100, 2) if total_clients > 0 else 0.0
 
 c1, c2, c3 = st.columns(3)
-with c1: st.metric("👥 إجمالي العملاء", f"{total_clients}")
-with c2: st.metric("🚨 عملاء لديهم تنبيهات", f"{alerts_today}")
-with c3: st.metric("✅ نسبة التسجيل", f"{rate}%")
+with c1:
+    st.metric("👥 إجمالي العملاء", f"{total_clients}")
+with c2:
+    st.metric("🚨 عملاء لديهم تنبيهات", f"{alerts_today}")
+with c3:
+    st.metric("✅ نسبة التسجيل", f"{rate}%")
 
 if not df_dash.empty:
-    grp = df_dash.groupby("__sheet_name").agg(
-        Clients=("Nom & Prénom", "count"),
-        Inscrits=("Inscription", lambda x: (x.astype(str).str.strip().str.lower() == "oui").sum())
+    # علامة تنبيه للصف (Alerte_view موش فاضي)
+    df_dash["__has_alert"] = df_dash["Alerte_view"].fillna("").astype(str).str.strip().ne("")
+
+    grp = (
+        df_dash.groupby("__sheet_name")
+        .agg(
+            Clients=("Nom & Prénom", "count"),
+            Inscrits=("Inscription", lambda x: (x.astype(str).str.strip().str.lower() == "oui").sum()),
+            تنبيهات=("__has_alert", "sum"),   # ← عدد التنبيهات للموظف
+        )
+        .reset_index()
+        .rename(columns={"__sheet_name": "الموظف"})
     )
+
     grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
     grp["% تسجيل"] = grp["% تسجيل"].round(2)
+
+    # ترتيب اختياري: أكثر موظّف عندو تنبيهات يطلع فوق
+    grp = grp.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
+
     st.dataframe(grp, use_container_width=True)
+
 
 # ================== 🔎 بحث عام برقم الهاتف ==================
 st.subheader("🔎 بحث عام برقم الهاتف")
