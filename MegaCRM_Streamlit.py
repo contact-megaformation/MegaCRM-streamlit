@@ -493,8 +493,6 @@ if not df_emp.empty:
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
-
-
     # ===== 📝 ملاحظات =====
     if not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة")
