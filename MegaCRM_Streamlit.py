@@ -359,7 +359,118 @@ if role == "أدمن":
 if role == "موظف" and employee:
     st.subheader(f"📁 لوحة {employee}")
     df_emp = df_all[df_all["__sheet_name"] == employee].copy()
+# ===== ✅ تعديل بيانات عميل عبر اختيار من الجدول (Checkbox) =====
+if role == "موظف" and employee and not filtered_df.empty:
+    st.markdown("### ✏️ تعديل بيانات عميل (اختيار من الجدول)")
 
+    edit_cols = [
+        "Nom & Prénom", "Téléphone", "Formation",
+        "Type de contact", "Date ajout", "Date de suivi",
+        "Inscription", "Remarque"
+    ]
+    show_cols = [c for c in edit_cols if c in filtered_df.columns]
+    view_df = filtered_df[show_cols].copy()
+
+    view_df["اختر"] = False  # خانة الاختيار
+
+    edited_grid = st.data_editor(
+        view_df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "اختر": st.column_config.CheckboxColumn("اختر", help="اختر سطرًا للتعديل")
+        }
+    )
+
+    selected_rows = edited_grid[edited_grid["اختر"] == True]
+    if selected_rows.empty:
+        st.info("اختر عميلًا من الجدول أعلاه لتعديله.")
+    else:
+        sel = selected_rows.iloc[0]
+        orig_phone_norm = normalize_tn_phone(sel["Téléphone"])
+
+        st.markdown("#### 🧾 تفاصيل العميل المختار")
+        c1, c2 = st.columns(2)
+        with c1:
+            new_name = st.text_input("👤 الاسم و اللقب", value=str(sel.get("Nom & Prénom","")))
+            new_phone_raw = st.text_input("📞 رقم الهاتف", value=str(sel.get("Téléphone","")))
+            new_formation = st.text_input("📚 التكوين", value=str(sel.get("Formation","")))
+            new_type = st.selectbox(
+                "📞 نوع الاتصال",
+                ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"],
+                index= ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"].index(
+                    str(sel.get("Type de contact","")) if str(sel.get("Type de contact","")) in ["Visiteur","Appel téléphonique","WhatsApp","Social media"] else "Visiteur"
+                )
+            )
+        with c2:
+            try:
+                cur_aj = pd.to_datetime(sel.get("Date ajout",""), dayfirst=True, errors="coerce").date()
+            except Exception:
+                cur_aj = date.today()
+            try:
+                cur_sv = pd.to_datetime(sel.get("Date de suivi",""), dayfirst=True, errors="coerce").date()
+            except Exception:
+                cur_sv = date.today()
+
+            new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_aj)
+            new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_sv)
+            new_insc = st.selectbox(
+                "🟢 التسجيل",
+                ["Pas encore", "Inscrit"],
+                index= 1 if str(sel.get("Inscription","")).strip().lower() in ("oui","inscrit") else 0
+            )
+
+        st.markdown("#### 📝 أضف/حدّث ملاحظة (بطابع زمني)")
+        extra_note = st.text_area("نص الملاحظة الجديدة", placeholder="اكتب ملاحظة لإضافتها…")
+
+        if st.button("💾 حفظ التعديلات", type="primary"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                row_idx = find_row_by_phone(ws, orig_phone_norm)
+                if not row_idx:
+                    st.error("❌ تعذّر إيجاد صف هذا العميل.")
+                else:
+                    col_name  = EXPECTED_HEADERS.index("Nom & Prénom") + 1
+                    col_tel   = EXPECTED_HEADERS.index("Téléphone") + 1
+                    col_form  = EXPECTED_HEADERS.index("Formation") + 1
+                    col_type  = EXPECTED_HEADERS.index("Type de contact") + 1
+                    col_ajout = EXPECTED_HEADERS.index("Date ajout") + 1
+                    col_suivi = EXPECTED_HEADERS.index("Date de suivi") + 1
+                    col_insc  = EXPECTED_HEADERS.index("Inscription") + 1
+                    col_rem   = EXPECTED_HEADERS.index("Remarque") + 1
+
+                    new_phone_norm = normalize_tn_phone(new_phone_raw)
+
+                    if not new_name.strip():
+                        st.error("❌ الاسم و اللقب إجباري.")
+                        st.stop()
+                    if not new_phone_norm.strip():
+                        st.error("❌ رقم الهاتف إجباري.")
+                        st.stop()
+
+                    phones_except_current = set(df_all["Téléphone_norm"].astype(str)) - {orig_phone_norm}
+                    if new_phone_norm in phones_except_current:
+                        st.error("⚠️ الرقم موجود مسبقًا في النظام.")
+                        st.stop()
+
+                    ws.update_cell(row_idx, col_name, new_name.strip())
+                    ws.update_cell(row_idx, col_tel, new_phone_norm)
+                    ws.update_cell(row_idx, col_form, new_formation.strip())
+                    ws.update_cell(row_idx, col_type, new_type)
+                    ws.update_cell(row_idx, col_ajout, fmt_date(new_ajout))
+                    ws.update_cell(row_idx, col_suivi, fmt_date(new_suivi))
+                    ws.update_cell(row_idx, col_insc, ("Oui" if new_insc == "Inscrit" else "Pas encore"))
+
+                    if extra_note.strip():
+                        old_rem = ws.cell(row_idx, col_rem).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        new_rem = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
+                        ws.update_cell(row_idx, col_rem, new_rem)
+
+                    st.success("✅ تم حفظ التعديلات")
+                    st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
     # ===== فلترة بالشهر =====
     if not df_emp.empty:
         df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
