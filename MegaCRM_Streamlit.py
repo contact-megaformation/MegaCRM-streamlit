@@ -419,11 +419,11 @@ if not df_emp.empty:
     df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
 
     # قائمة العملاء بالاسم + الهاتف
-    phone_choices = {
-        f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
-        for _, row in df_emp_edit.iterrows()
-        if str(row["Téléphone"]).strip() != ""
-    }
+ phone_choices = {
+    f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+    for i, row in df_emp.iterrows()
+}
+
 
     if phone_choices:
         chosen_key = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
