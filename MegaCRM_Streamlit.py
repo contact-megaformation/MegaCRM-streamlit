@@ -501,35 +501,21 @@ if not df_emp.empty:
 
     # ===== 📝 ملاحظات =====
     if not df_emp.empty:
-        st.markdown("### 📝 أضف ملاحظة")
-        scope_df = filtered_df if not filtered_df.empty else df_emp
-        scope_df = scope_df.copy()
-        scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_to_update_key = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()]
-        )
-        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-        new_note = st.text_area("🗒️ ملاحظة جديدة")
-        if st.button("📌 أضف الملاحظة"):
-            if new_note.strip() == "":
-                st.warning("⚠️ الملاحظة فارغة!")
-            else:
-                try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                    row_idx = find_row_by_phone(ws, tel_to_update)
-                    if not row_idx:
-                        st.error("❌ لم يتم إيجاد العميل بالهاتف.")
-                    else:
-                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                        old_remark = ws.cell(row_idx, rem_col).value or ""
-                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note.strip()}"
-                        ws.update_cell(row_idx, rem_col, updated)
-                        st.success("✅ تمت إضافة الملاحظة")
-                        st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
+    st.markdown("### 📝 أضف ملاحظة")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+
+    options_notes = [
+        _choice_label_with_index(i, row)
+        for i, (idx, row) in enumerate(scope_df.iterrows())
+    ]
+    tel_to_update_key = st.selectbox("اختر العميل", options_notes, key="note_pick")
+    tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
+
+    new_note = st.text_area("🗒️ ملاحظة جديدة")
+    # ... (كمّل نفس كود الحفظ والطابع الزمني كما هو)
+
 
     # ===== 🎨 Tag =====
     if not df_emp.empty:
