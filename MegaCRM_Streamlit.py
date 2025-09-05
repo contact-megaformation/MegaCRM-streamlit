@@ -359,6 +359,50 @@ if role == "أدمن":
 if role == "موظف" and employee:
     st.subheader(f"📁 لوحة {employee}")
     df_emp = df_all[df_all["__sheet_name"] == employee].copy()
+
+    # ===== فلترة بالشهر =====
+    if not df_emp.empty:
+        df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
+        df_emp = df_emp.dropna(subset=["DateAjout_dt"])
+        df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
+        month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
+        filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
+    else:
+        st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
+        filtered_df = pd.DataFrame()
+
+    # ===== عدّاد: المضافين بلا ملاحظات =====
+    if not filtered_df.empty:
+        pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
+        pending_no_notes = int(pending_mask.sum())
+        st.markdown("### 📊 متابعتك")
+        st.metric("⏳ مضافين بلا ملاحظات", pending_no_notes)
+
+        # فلترة بالتكوين
+        formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
+        formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
+        if formation_choice != "الكل":
+            filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
+
+    # ===== عرض العملاء =====
+    def render_table(df_disp: pd.DataFrame):
+        if df_disp.empty:
+            st.info("لا توجد بيانات في هذا الفلتر.")
+            return
+        _df = df_disp.copy()
+        if "Alerte_view" in _df.columns:
+            _df["Alerte"] = _df["Alerte_view"]
+        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
+        styled = (
+            _df[display_cols]
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"])
+            .applymap(color_tag, subset=["Tag"])
+        )
+        st.dataframe(styled, use_container_width=True)
+
+    st.markdown("### 📋 قائمة العملاء")
+    render_table(filtered_df)
 # ===== ✅ تعديل بيانات عميل عبر اختيار من الجدول (Checkbox) =====
 if role == "موظف" and employee and not filtered_df.empty:
     st.markdown("### ✏️ تعديل بيانات عميل (اختيار من الجدول)")
@@ -371,7 +415,8 @@ if role == "موظف" and employee and not filtered_df.empty:
     show_cols = [c for c in edit_cols if c in filtered_df.columns]
     view_df = filtered_df[show_cols].copy()
 
-    view_df["اختر"] = False  # خانة الاختيار
+    # نضيف عمود اختيار
+    view_df["اختر"] = False
 
     edited_grid = st.data_editor(
         view_df,
@@ -398,8 +443,9 @@ if role == "موظف" and employee and not filtered_df.empty:
             new_type = st.selectbox(
                 "📞 نوع الاتصال",
                 ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"],
-                index= ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"].index(
-                    str(sel.get("Type de contact","")) if str(sel.get("Type de contact","")) in ["Visiteur","Appel téléphonique","WhatsApp","Social media"] else "Visiteur"
+                index= ["Visiteur","Appel téléphonique","WhatsApp","Social media"].index(
+                    str(sel.get("Type de contact","")) if str(sel.get("Type de contact","")) in
+                    ["Visiteur","Appel téléphonique","WhatsApp","Social media"] else "Visiteur"
                 )
             )
         with c2:
@@ -448,11 +494,13 @@ if role == "موظف" and employee and not filtered_df.empty:
                         st.error("❌ رقم الهاتف إجباري.")
                         st.stop()
 
+                    # منع تكرار الرقم (مع استثناء رقم السطر الحالي)
                     phones_except_current = set(df_all["Téléphone_norm"].astype(str)) - {orig_phone_norm}
                     if new_phone_norm in phones_except_current:
                         st.error("⚠️ الرقم موجود مسبقًا في النظام.")
                         st.stop()
 
+                    # تحديث القيم
                     ws.update_cell(row_idx, col_name, new_name.strip())
                     ws.update_cell(row_idx, col_tel, new_phone_norm)
                     ws.update_cell(row_idx, col_form, new_formation.strip())
@@ -461,6 +509,7 @@ if role == "موظف" and employee and not filtered_df.empty:
                     ws.update_cell(row_idx, col_suivi, fmt_date(new_suivi))
                     ws.update_cell(row_idx, col_insc, ("Oui" if new_insc == "Inscrit" else "Pas encore"))
 
+                    # ملاحظة بطابع زمني (تضاف فوق القدام)
                     if extra_note.strip():
                         old_rem = ws.cell(row_idx, col_rem).value or ""
                         stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -471,49 +520,6 @@ if role == "موظف" and employee and not filtered_df.empty:
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
-    # ===== فلترة بالشهر =====
-    if not df_emp.empty:
-        df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
-        df_emp = df_emp.dropna(subset=["DateAjout_dt"])
-        df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
-        month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
-        filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
-    else:
-        st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
-        filtered_df = pd.DataFrame()
-
-    # ===== عدّاد: المضافين بلا ملاحظات =====
-    if not filtered_df.empty:
-        pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
-        pending_no_notes = int(pending_mask.sum())
-        st.markdown("### 📊 متابعتك")
-        st.metric("⏳ مضافين بلا ملاحظات", pending_no_notes)
-
-        # فلترة بالتكوين
-        formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
-        formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
-        if formation_choice != "الكل":
-            filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
-
-    # ===== عرض العملاء =====
-    def render_table(df_disp: pd.DataFrame):
-        if df_disp.empty:
-            st.info("لا توجد بيانات في هذا الفلتر.")
-            return
-        _df = df_disp.copy()
-        if "Alerte_view" in _df.columns:
-            _df["Alerte"] = _df["Alerte_view"]
-        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
-        styled = (
-            _df[display_cols]
-            .style.apply(highlight_inscrit_row, axis=1)
-            .applymap(mark_alert_cell, subset=["Alerte"])
-            .applymap(color_tag, subset=["Tag"])
-        )
-        st.dataframe(styled, use_container_width=True)
-
-    st.markdown("### 📋 قائمة العملاء")
-    render_table(filtered_df)
 
     # ===== عملاء لديهم تنبيهات =====
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
