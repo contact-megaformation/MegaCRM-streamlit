@@ -419,17 +419,20 @@ if not df_emp.empty:
     df_emp_edit = df_emp.copy()
     df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
 
-    # قائمة العملاء بالاسم + الهاتف
+    # ✅ هنا نزيد الـindex في الاختيار
     phone_choices = {
-        f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
-        for _, row in df_emp_edit.iterrows()
+        f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+        for i, row in df_emp_edit.iterrows()
         if str(row["Téléphone"]).strip() != ""
     }
 
     if phone_choices:
-        chosen_key = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
+        chosen_key = st.selectbox(
+            "اختر العميل (بالاسم/الهاتف)", 
+            list(phone_choices.keys()), 
+            key="edit_pick"
+        )
         chosen_phone = phone_choices.get(chosen_key, "")
-
         cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
         cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
         cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
