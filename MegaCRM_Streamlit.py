@@ -497,8 +497,6 @@ if not df_emp.empty:
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
-
-
     # ===== 📝 ملاحظات =====
     if not df_emp.empty:
     st.markdown("### 📝 أضف ملاحظة")
@@ -514,9 +512,24 @@ if not df_emp.empty:
     tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
 
     new_note = st.text_area("🗒️ ملاحظة جديدة")
-    # ... (كمّل نفس كود الحفظ والطابع الزمني كما هو)
-
-
+if new_note.strip() == "":
+                st.warning("⚠️ الملاحظة فارغة!")
+            else:
+                try:
+                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    row_idx = find_row_by_phone(ws, tel_to_update)
+                    if not row_idx:
+                        st.error("❌ لم يتم إيجاد العميل بالهاتف.")
+                    else:
+                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
+                        old_remark = ws.cell(row_idx, rem_col).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note.strip()}"
+                        ws.update_cell(row_idx, rem_col, updated)
+                        st.success("✅ تمت إضافة الملاحظة")
+                        st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
     # ===== 🎨 Tag =====
     if not df_emp.empty:
         st.markdown("### 🎨 اختر لون/Tag للعميل")
