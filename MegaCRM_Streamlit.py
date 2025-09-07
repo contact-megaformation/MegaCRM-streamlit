@@ -200,33 +200,35 @@ df_dash = df_all.copy()
 if df_dash.empty:
     st.info("ما فماش داتا للعرض.")
 else:
+    # تأمين الأعمدة المشتقّة لو ناقصين (احتياط)
+    df_dash["DateAjout_dt"] = pd.to_datetime(df_dash.get("Date ajout"), dayfirst=True, errors="coerce")
+    df_dash["DateSuivi_dt"] = pd.to_datetime(df_dash.get("Date de suivi"), dayfirst=True, errors="coerce")
+
     today = datetime.now().date()
 
-    def is_current_alert_row(row):
-        # تنبيه موجود نصيًا أو تاريخ المتابعة اليوم/قبل اليوم
-        al = str(row.get("Alerte", "") or row.get("Alerte_view", "")).strip()
-        if al:
-            return True
-        dsv = row.get("DateSuivi_dt")
-        if pd.isna(dsv):
-            return False
-        return dsv.date() <= today
-
-    # 🧮 أعلام
+    # تطبيع التسجيل والتنبيه (نخدموا فقط على Alerte_view بعد التنظيف)
     df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
-    added_today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
-    df_dash["__has_alert_now"] = df_dash.apply(is_current_alert_row, axis=1)
-    df_dash["__added_today"] = added_today_mask
-    df_dash["__reg_today"] = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
+    df_dash["Alerte_norm"]      = df_dash["Alerte_view"].fillna("").astype(str).str.strip()
 
-    # ميتريكس عامة
-    total_clients = len(df_dash)
-    added_today = int(added_today_mask.sum())
-    registered_today = int(df_dash["__reg_today"].sum())
-    alerts_now = int(df_dash["__has_alert_now"].sum())
+    # 🆕 المضافون اليوم
+    added_today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
+
+    # ✅ المسجّلون اليوم (Inscription=Oui/Inscrit و Date ajout = اليوم)
+    registered_today_mask = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
+
+    # 🚨 التنبيهات الحالية (فقط اعتمادًا على Alerte_view بعد التنظيف)
+    alert_now_mask = df_dash["Alerte_norm"].ne("")
+
+    # أرقام عامة
+    total_clients    = int(len(df_dash))
+    added_today      = int(added_today_mask.sum())
+    registered_today = int(registered_today_mask.sum())
+    alerts_now       = int(alert_now_mask.sum())
+
     registered_total = int((df_dash["Inscription_norm"] == "oui").sum())
     rate = round((registered_total / total_clients) * 100, 2) if total_clients else 0.0
 
+    # كروت
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         st.metric("👥 إجمالي العملاء", f"{total_clients}")
@@ -239,28 +241,38 @@ else:
     with c5:
         st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
-    # -------- حسب الموظف --------
+    # -------- تجميع حسب الموظّف --------
+    df_dash["__added_today"] = added_today_mask
+    df_dash["__reg_today"]   = registered_today_mask
+    df_dash["__has_alert"]   = alert_now_mask
+
     grp_base = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
-            Clients=("Nom & Prénom", "count"),
-            Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
-            تنبيهات=("__has_alert_now", "sum"),
+            Clients   = ("Nom & Prénom", "count"),
+            Inscrits  = ("Inscription_norm", lambda x: (x == "oui").sum()),
+            تنبيهات     = ("__has_alert", "sum"),   # يعتمد على Alerte_view فقط
         )
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
+
     today_by_emp = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
-            مضافون_اليوم=("__added_today", "sum"),
-            مسجلون_اليوم=("__reg_today", "sum"),
+            مضافون_اليوم   = ("__added_today", "sum"),
+            مسجلون_اليوم   = ("__reg_today", "sum"),
         )
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
+
     grp = grp_base.merge(today_by_emp, on="الموظف", how="left")
+
+    # نسبة التسجيل لكل موظف
     grp["% تسجيل"] = ((grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
+
+    # ترتيب: الأكثر تنبيهات ثم الأكثر عملاء
     grp = grp.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
 
     st.markdown("#### حسب الموظّف")
