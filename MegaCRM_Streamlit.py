@@ -185,70 +185,88 @@ st.subheader("لوحة إحصائيات سريعة")
 
 df_dash = df_all.copy()
 
-# إجمالي العملاء
-total_clients = len(df_dash)
+if df_dash.empty:
+    st.info("ما فماش داتا للعرض.")
+else:
+    # ----- منطق التنبيه الحالي: Alerte نص أو Date de suivi <= اليوم -----
+    today = datetime.now().date()
 
-# عملاء عندهم تنبيه اليوم/حالياً (Alerte_view موش فارغ)
-alerts_today = int(
-    df_dash["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum()
-) if not df_dash.empty else 0
+    def is_current_alert_row(row):
+        al = str(row.get("Alerte", "") or row.get("Alerte_view", "")).strip()
+        if al:
+            return True
+        dsv = row.get("DateSuivi_dt")
+        if pd.isna(dsv):
+            return False
+        return dsv.date() <= today
 
-# نسبة التسجيل الإجمالية
-reg_col = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower() if not df_dash.empty else pd.Series([], dtype=str)
-registered_total = int((reg_col.isin(["oui", "inscrit"])).sum()) if not df_dash.empty else 0
-rate = round((registered_total / total_clients) * 100, 2) if total_clients > 0 else 0.0
+    # أعمدة مساعدة
+    df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
 
-# حساب اليوم
-today = datetime.now().date()
+    # 🆕 المضافون اليوم
+    added_today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
+    added_today = int(added_today_mask.sum())
 
-# العملاء المضافين اليوم
-added_today = int(
-    df_dash["DateAjout_dt"].dt.date.eq(today).sum()
-) if "DateAjout_dt" in df_dash.columns else 0
+    # ✅ المسجّلون اليوم (ما عناش تاريخ تسجيل مستقل، نعتمدو Date ajout = اليوم)
+    registered_today = int(
+        (df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask).sum()
+    )
 
-# العملاء المسجّلين اليوم (تقريبًا: مسجّل + تاريخ الإضافة اليوم)
-registered_today = 0
-if not df_dash.empty and "DateAjout_dt" in df_dash.columns:
-    reg_mask = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"])
-    today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
-    registered_today = int((reg_mask & today_mask).sum())
+    # 🚨 التنبيهات الحالية (Alerte نص أو Date suivi <= اليوم)
+    alerts_now = int(df_dash.apply(is_current_alert_row, axis=1).sum())
 
-# 🧮 عرض المِتريكس
-c1, c2, c3, c4, c5 = st.columns(5)
-with c1:
-    st.metric("👥 إجمالي العملاء", f"{total_clients}")
-with c2:
-    st.metric("✅ نسبة التسجيل (إجمالي)", f"{rate}%")
-with c3:
-    st.metric("🆕 المضافون اليوم", f"{added_today}")
-with c4:
-    st.metric("✅ المسجّلون اليوم", f"{registered_today}")
-with c5:
-    st.metric("🚨 تنبيهات حالية", f"{alerts_today}")
+    # إجمالي ومسجّلين إجمالاً
+    total_clients = len(df_dash)
+    registered_total = int((df_dash["Inscription_norm"] == "oui").sum())
+    rate = round((registered_total / total_clients) * 100, 2) if total_clients else 0.0
 
-# تجميع حسب الموظف + عمود عدد التنبيهات
-if not df_dash.empty:
-    df_dash["__has_alert"] = df_dash["Alerte_view"].fillna("").astype(str).str.strip().ne("")
+    # كروت
+    c1, c2, c3, c4, c5 = st.columns(5)
+    with c1:
+        st.metric("👥 إجمالي العملاء", f"{total_clients}")
+    with c2:
+        st.metric("🆕 المضافون اليوم", f"{added_today}")
+    with c3:
+        st.metric("✅ المسجّلون اليوم", f"{registered_today}")
+    with c4:
+        st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
+    with c5:
+        st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+
+    # -------- تجميع حسب الموظّف --------
+    # علَمة تنبيه للصف
+    df_dash["__has_alert_now"] = df_dash.apply(is_current_alert_row, axis=1)
+    df_dash["__added_today"] = added_today_mask
+    df_dash["__reg_today"] = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
 
     grp = (
-        df_dash.groupby("__sheet_name")
+        df_dash.groupby("__sheet_name", dropna=False)
         .agg(
             Clients=("Nom & Prénom", "count"),
-            Inscrits=("Inscription", lambda x: (x.astype(str).str.strip().str.lower().isin(["oui","inscrit"])).sum()),
-            تنبيهات=("__has_alert", "sum"),
+            Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
+            تنبيهات=("__has_alert_now", "sum"),
+            مضافون_اليوم=("**dummy**", lambda _: int(0))  # placeholder سنتبدلو تحت
         )
+        .rename_axis(None)
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
-    grp["% تسجيل"] = (grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
-    grp["% تسجيل"] = grp["% تسجيل"].round(2)
 
-    # ترتيب اختياري: الموظف اللي عندو أكثر تنبيهات يطلع الأول
+    # نضيف أعمدة اليوم (مضافون/مسجّلون) باستعمال نفس الداتا
+    today_by_emp = df_dash.groupby("__sheet_name").agg(
+        مضافون_اليوم=("__added_today", "sum"),
+        مسجلون_اليوم=("__reg_today", "sum")
+    ).reset_index().rename(columns={"__sheet_name": "الموظف"})
+
+    grp = grp.drop(columns=["مضافون_اليوم"]).merge(today_by_emp, on="الموظف", how="left")
+
+    grp["% تسجيل"] = ((grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
+
+    # ترتيب اختياري: أكثر تنبيهات ثم أكثر عملاء
     grp = grp.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
 
+    st.markdown("#### حسب الموظّف")
     st.dataframe(grp, use_container_width=True)
-
-
 
 # ================== 🔎 بحث عام برقم الهاتف ==================
 st.subheader("🔎 بحث عام برقم الهاتف")
