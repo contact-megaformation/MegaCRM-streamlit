@@ -1,5 +1,4 @@
-
-# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer
+# MegaCRM_Streamlit_App.py — MegaCRM (Alerts Today + Overdue, Admin + Employee, Reassign, Edit with Index, Notes Timestamp, WhatsApp)
 
 import json
 import streamlit as st
@@ -43,7 +42,7 @@ def make_client_and_sheet_id():
     except Exception:
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
         client = gspread.authorize(creds)
-        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها إذا يلزم
         return client, sheet_id
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
@@ -92,8 +91,15 @@ def color_tag(val):
     return ""
 
 def mark_alert_cell(val: str):
-    # خلفية حمراء لخلية التنبيه فقط
-    return 'background-color: #ffcccc; color: #7a0000' if str(val).strip() != "" else ''
+    """تلوين خلية التنبيه حسب الحالة"""
+    s = str(val).strip()
+    if not s:
+        return ''
+    if "متأخرة" in s:
+        # أصفر للمتأخر
+        return 'background-color: #ffe6b3; color: #7a4e00'
+    # أحمر لليوم أو أي نص تنبيه
+    return 'background-color: #ffcccc; color: #7a0000'
 
 def highlight_inscrit_row(row: pd.Series):
     # تلوين الصف كامل بالأخضر إذا مسجّل
@@ -152,9 +158,14 @@ if not df_all.empty:
 
     today = datetime.now().date()
     base_alert = df_all["Alerte"].fillna("").astype(str).str.strip()
-    due_today = df_all["DateSuivi_dt"].dt.date.eq(today).fillna(False)
 
+    dsv_date = df_all["DateSuivi_dt"].dt.date
+    due_today = dsv_date.eq(today).fillna(False)
+    overdue = dsv_date.lt(today).fillna(False)
+
+    # عرض التنبيه
     df_all["Alerte_view"] = base_alert
+    df_all.loc[base_alert.eq("") & overdue, "Alerte_view"] = "⚠️ متابعة متأخرة"
     df_all.loc[base_alert.eq("") & due_today, "Alerte_view"] = "⏰ متابعة اليوم"
 
     df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
@@ -189,10 +200,10 @@ df_dash = df_all.copy()
 if df_dash.empty:
     st.info("ما فماش داتا للعرض.")
 else:
-    # ----- منطق التنبيه الحالي: Alerte فيها نص أو Date de suivi <= اليوم -----
     today = datetime.now().date()
 
     def is_current_alert_row(row):
+        # تنبيه موجود نصيًا أو تاريخ المتابعة اليوم/قبل اليوم
         al = str(row.get("Alerte", "") or row.get("Alerte_view", "")).strip()
         if al:
             return True
@@ -201,30 +212,21 @@ else:
             return False
         return dsv.date() <= today
 
-    # أعمدة مساعدة
-    df_dash["Inscription_norm"] = (
-        df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
-    )
-
-    # 🆕 المضافون اليوم
+    # 🧮 أعلام
+    df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
     added_today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
-    added_today = int(added_today_mask.sum())
-
-    # ✅ المسجّلون اليوم (Inscription = Oui/Inscrit و Date ajout = اليوم)
-    registered_today = int(
-        (df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask).sum()
-    )
-
-    # 🚨 التنبيهات الحالية
     df_dash["__has_alert_now"] = df_dash.apply(is_current_alert_row, axis=1)
-    alerts_now = int(df_dash["__has_alert_now"].sum())
+    df_dash["__added_today"] = added_today_mask
+    df_dash["__reg_today"] = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
 
-    # إجمالي ومسجّلين إجمالاً
+    # ميتريكس عامة
     total_clients = len(df_dash)
+    added_today = int(added_today_mask.sum())
+    registered_today = int(df_dash["__reg_today"].sum())
+    alerts_now = int(df_dash["__has_alert_now"].sum())
     registered_total = int((df_dash["Inscription_norm"] == "oui").sum())
     rate = round((registered_total / total_clients) * 100, 2) if total_clients else 0.0
 
-    # كروت
     c1, c2, c3, c4, c5 = st.columns(5)
     with c1:
         st.metric("👥 إجمالي العملاء", f"{total_clients}")
@@ -237,12 +239,7 @@ else:
     with c5:
         st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
-    # -------- تجميع حسب الموظّف --------
-    # أعلام لليوم
-    df_dash["__added_today"] = added_today_mask
-    df_dash["__reg_today"] = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
-
-    # تجميع أساسي
+    # -------- حسب الموظف --------
     grp_base = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
@@ -253,8 +250,6 @@ else:
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
-
-    # تجميع اليوم (مضافون/مسجّلون)
     today_by_emp = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
@@ -264,18 +259,13 @@ else:
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
-
-    # دمج
     grp = grp_base.merge(today_by_emp, on="الموظف", how="left")
-
-    # نسبة التسجيل
     grp["% تسجيل"] = ((grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
-
-    # ترتيب اختياري
     grp = grp.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
 
     st.markdown("#### حسب الموظّف")
     st.dataframe(grp, use_container_width=True)
+
 # ================== 🔎 بحث عام برقم الهاتف ==================
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
@@ -359,9 +349,9 @@ if role == "أدمن":
                         st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
- # ===== 🔁 نقل عميل بين الموظفين =====
-    st.markdown("### 🔁 نقل عميل بين الموظفين")
 
+    # ===== 🔁 نقل عميل بين الموظفين =====
+    st.markdown("### 🔁 نقل عميل بين الموظفين")
     colRA, colRB = st.columns(2)
     with colRA:
         src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
@@ -386,24 +376,21 @@ if role == "أدمن":
                 ws_src = sh.worksheet(src_emp)
                 ws_dst = sh.worksheet(dst_emp)
 
-                # نلقاو الصفّ بالهاتف
                 row_idx = find_row_by_phone(ws_src, phone_pick)
                 if not row_idx:
                     st.error("❌ لم يتم العثور على هذا العميل في ورقة المصدر.")
                 else:
                     row_values = ws_src.row_values(row_idx)
-                    # عدّل حقل Employe
                     if len(row_values) < len(EXPECTED_HEADERS):
                         row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
                     row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                    # أضف في الوجهة
                     ws_dst.append_row(row_values)
-                    # امسح من المصدر
                     ws_src.delete_rows(row_idx)
                     st.success(f"✅ تم نقل العميل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء النقل: {e}")
+
     # 🗑️ حذف موظف (تنبيه)
     st.markdown("### 🗑️ حذف موظف")
     emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes, key="delete_emp")
@@ -468,13 +455,13 @@ if role == "موظف" and employee:
         st.markdown("### 🚨 عملاء مع تنبيهات")
         render_table(alerts_df)
 
- # ===== ✏️ تعديل بيانات عميل (اسم/هاتف/تكوين/تواريخ/تسجيل/ملاحظة) =====
+# ===== ✏️ تعديل بيانات عميل (اسم/هاتف/تكوين/تواريخ/تسجيل/ملاحظة) =====
 if not df_emp.empty:
     st.markdown("### ✏️ تعديل بيانات عميل")
     df_emp_edit = df_emp.copy()
     df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
 
-    # ✅ هنا نزيد الـindex في الاختيار
+    # ✅ إضافة الـindex في نص الاختيار لتسهيل البحث
     phone_choices = {
         f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
         for i, row in df_emp_edit.iterrows()
@@ -482,13 +469,8 @@ if not df_emp.empty:
     }
 
     if phone_choices:
-        chosen_key = st.selectbox(
-            "اختر العميل (بالاسم/الهاتف)", 
-            list(phone_choices.keys()), 
-            key="edit_pick"
-        )
+        chosen_key = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
         chosen_phone = phone_choices.get(chosen_key, "")
-
 
         cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
         cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
@@ -510,7 +492,11 @@ if not df_emp.empty:
             new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key="edit_suivi_dt")
             new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key="edit_insc_sel")
 
-        new_remark = st.text_area("🗒️ ملاحظة", value=cur_remark, key="edit_remark_txt")
+        # ملاحظة كاملة (لو تحب تعدّل النص كله)
+        new_remark_full = st.text_area("🗒️ ملاحظة (سيتم استبدال المحتوى الحالي بهذا النص)", value=cur_remark, key="edit_remark_txt")
+
+        # ملاحظة إضافية بطابع زمني (تلصق تحت القديمة)
+        extra_note = st.text_area("➕ أضف ملاحظة جديدة (سوف تُضاف مع الطابع الزمني)", placeholder="اكتب ملاحظة لإلحاقها…", key="append_note_txt")
 
         if st.button("💾 حفظ التعديلات", key="save_all_edits"):
             try:
@@ -519,15 +505,12 @@ if not df_emp.empty:
                 if not row_idx:
                     st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
                 else:
-                    # تحضير أعمدة الشيت
                     col_map = {h: EXPECTED_HEADERS.index(h) + 1 for h in [
                         "Nom & Prénom", "Téléphone", "Formation",
                         "Date ajout", "Date de suivi", "Inscription", "Remarque"
                     ]}
 
-                    # التحقق من البيانات
                     new_phone_norm = normalize_tn_phone(new_phone_raw)
-
                     if not new_name.strip():
                         st.error("❌ الاسم و اللقب إجباري.")
                         st.stop()
@@ -535,87 +518,98 @@ if not df_emp.empty:
                         st.error("❌ رقم الهاتف إجباري.")
                         st.stop()
 
-                    # منع التكرار في كامل النظام (اسمح بتغيير رقمك الحالي)
                     phones_except_current = set(ALL_PHONES) - {chosen_phone}
                     if new_phone_norm in phones_except_current:
                         st.error("⚠️ الرقم موجود مسبقًا في النظام. رجاءً اختر رقمًا آخر.")
                         st.stop()
 
-                    # تحديث القيم
+                    # تحديث الحقول الأساسية
                     ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                     ws.update_cell(row_idx, col_map["Téléphone"], new_phone_norm)
                     ws.update_cell(row_idx, col_map["Formation"], new_formation.strip())
                     ws.update_cell(row_idx, col_map["Date ajout"], fmt_date(new_ajout))
                     ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
                     ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
-                    ws.update_cell(row_idx, col_map["Remarque"], new_remark.strip())
 
-                    st.success("✅ تم حفظ التعديلات (الاسم/الهاتف/التكوين/التواريخ/التسجيل/الملاحظة)")
+                    # التعامل مع الملاحظات:
+                    # 1) إن حبيت تبدّل المحتوى كامل
+                    if new_remark_full.strip() != cur_remark.strip():
+                        ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
+
+                    # 2) إضافة ملاحظة جديدة بطابع زمني (تلصيق)
+                    if extra_note.strip():
+                        old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
+                        ws.update_cell(row_idx, col_map["Remarque"], appended)
+
+                    st.success("✅ تم حفظ التعديلات")
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-
-    # ===== 📝 ملاحظات =====
-    if not df_emp.empty:
-        st.markdown("### 📝 أضف ملاحظة")
-        scope_df = filtered_df if not filtered_df.empty else df_emp
-        scope_df = scope_df.copy()
-        scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_to_update_key = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()]
-        )
-        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-        new_note = st.text_area("🗒️ ملاحظة جديدة")
-        if st.button("📌 أضف الملاحظة"):
-            if new_note.strip() == "":
-                st.warning("⚠️ الملاحظة فارغة!")
-            else:
-                try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                    row_idx = find_row_by_phone(ws, tel_to_update)
-                    if not row_idx:
-                        st.error("❌ لم يتم إيجاد العميل بالهاتف.")
-                    else:
-                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                        old_remark = ws.cell(row_idx, rem_col).value or ""
-                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note.strip()}"
-                        ws.update_cell(row_idx, rem_col, updated)
-                        st.success("✅ تمت إضافة الملاحظة")
-                        st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
-
-    # ===== 🎨 Tag =====
-    if not df_emp.empty:
-        st.markdown("### 🎨 اختر لون/Tag للعميل")
-        scope_df = filtered_df if not filtered_df.empty else df_emp
-        scope_df = scope_df.copy()
-        scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_color_key = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-            key="tag_select"
-        )
-        tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
-        hex_color = st.color_picker("اختر اللون")
-        if st.button("🖌️ تلوين"):
+# ===== 📝 ملاحظات (إضافة سريعة بطابع زمني) =====
+if role == "موظف" and employee and not df_emp.empty:
+    st.markdown("### 📝 أضف ملاحظة (سريعة)")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_to_update_key = st.selectbox(
+        "اختر العميل",
+        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+        key="note_quick_pick"
+    )
+    tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
+    new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
+    if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
+        if new_note_quick.strip() == "":
+            st.warning("⚠️ الملاحظة فارغة!")
+        else:
             try:
                 ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                row_idx = find_row_by_phone(ws, tel_color)
+                row_idx = find_row_by_phone(ws, tel_to_update)
                 if not row_idx:
-                    st.error("❌ لم يتم إيجاد العميل.")
+                    st.error("❌ لم يتم إيجاد العميل بالهاتف.")
                 else:
-                    color_cell = EXPECTED_HEADERS.index("Tag") + 1
-                    ws.update_cell(row_idx, color_cell, hex_color)
-                    st.success("✅ تم التلوين")
+                    rem_col = EXPECTED_HEADERS.index("Remarque") + 1
+                    old_remark = ws.cell(row_idx, rem_col).value or ""
+                    stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
+                    ws.update_cell(row_idx, rem_col, updated)
+                    st.success("✅ تمت إضافة الملاحظة")
                     st.cache_data.clear()
             except Exception as e:
-                st.error(f"❌ خطأ أثناء الحفظ: {e}")
+                st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
 
-    # ===== ➕ إضافة عميل (الموظف) =====
+# ===== 🎨 Tag =====
+if role == "موظف" and employee and not df_emp.empty:
+    st.markdown("### 🎨 اختر لون/Tag للعميل")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_color_key = st.selectbox(
+        "اختر العميل",
+        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+        key="tag_select"
+    )
+    tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
+    hex_color = st.color_picker("اختر اللون")
+    if st.button("🖌️ تلوين"):
+        try:
+            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+            row_idx = find_row_by_phone(ws, tel_color)
+            if not row_idx:
+                st.error("❌ لم يتم إيجاد العميل.")
+            else:
+                color_cell = EXPECTED_HEADERS.index("Tag") + 1
+                ws.update_cell(row_idx, color_cell, hex_color)
+                st.success("✅ تم التلوين")
+                st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ أثناء الحفظ: {e}")
+
+# ===== ➕ إضافة عميل (الموظف) =====
+if role == "موظف" and employee:
     st.markdown("### ➕ أضف عميل جديد")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
@@ -650,19 +644,19 @@ if not df_emp.empty:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-    # ===== WhatsApp زرّ مباشر =====
+# ===== WhatsApp زرّ مباشر =====
+if role == "موظف" and employee and not df_emp.empty:
     st.markdown("### 📲 تواصل عبر واتساب")
-    if not df_emp.empty:
-        df_emp_w = df_emp.copy()
-        df_emp_w["Téléphone_norm"] = df_emp_w["Téléphone"].apply(normalize_tn_phone)
-        choice = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in df_emp_w.iterrows()],
-            key="wa_select"
-        )
-        tel_norm = normalize_tn_phone(choice.split("—")[-1])
-        default_msg = "Bonjour, c'est MegaFormation. On vous contacte pour le suivi de votre formation."
-        msg = st.text_input("نص الرسالة", value=default_msg)
-        from urllib.parse import quote
-        wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
-        st.link_button("📤 فتح واتساب", wa_url)
+    df_emp_w = df_emp.copy()
+    df_emp_w["Téléphone_norm"] = df_emp_w["Téléphone"].apply(normalize_tn_phone)
+    choice = st.selectbox(
+        "اختر العميل",
+        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in df_emp_w.iterrows()],
+        key="wa_select"
+    )
+    tel_norm = normalize_tn_phone(choice.split("—")[-1])
+    default_msg = "Bonjour, c'est MegaFormation. On vous contacte pour le suivi de votre formation."
+    msg = st.text_input("نص الرسالة", value=default_msg)
+    from urllib.parse import quote
+    wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
+    st.link_button("📤 فتح واتساب", wa_url)
