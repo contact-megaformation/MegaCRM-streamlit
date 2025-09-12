@@ -13,7 +13,7 @@ gc = gspread.authorize(creds)
 sh = gc.open_by_key("1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI")
 
 try:
-    ws = sh.worksheet(TAB_NAME)
+    ws = sh.worksheet("DASHBOARD_STATS")
 except gspread.WorksheetNotFound:
     ws = sh.add_worksheet(title=TAB_NAME, rows=10, cols=2)
 
