@@ -1,10 +1,12 @@
-# MegaCRM_Streamlit_App.py — MegaCRM (Alerts Today + Overdue, Admin + Employee, Reassign, Edit with Index, Notes Timestamp, WhatsApp)
+# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer
 
 import json
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
+from datetime import datetime, date
+from PIL import Image
 # ========== Page config ==========
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
