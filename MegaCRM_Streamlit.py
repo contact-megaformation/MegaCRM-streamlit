@@ -7,7 +7,31 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=SCOPES)
+gc = gspread.authorize(creds)
+sh = gc.open_by_key(SHEET_ID)
 
+try:
+    ws = sh.worksheet(TAB_NAME)
+except gspread.WorksheetNotFound:
+    ws = sh.add_worksheet(title=TAB_NAME, rows=10, cols=2)
+
+def update_stats(total:int, added_today:int, registered_today:int, alerts_now:int):
+    data = [
+        ["key", "value"],
+        ["date", dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")],
+        ["total", total],
+        ["added_today", added_today],
+        ["registered_today", registered_today],
+        ["alerts_now", alerts_now],
+    ]
+    ws.clear()
+    ws.update("A1", data)
+
+# مثال: بعد ما تحسب أرقامك الحقيقية
+# update_stats(total, added_today, registered_today, alerts_now)
+# st.success("✅ STATS updated to Google Sheet")
 # ========== Page config ==========
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
