@@ -608,109 +608,179 @@ if not df_emp.empty:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-     # ========== 💳 المدفوعات (Liste déroulante) ==========
-st.markdown("### 💳 المدفوعات")
+# ======================= 💳 المدفوعات (Expander) =======================
+st.markdown("---")
 
-# عمود سعر التسجيل في نفس شيت الموظّف
-col_prix = EXPECTED_HEADERS.index("Prix inscription") + 1
-ws_emp = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-row_idx = find_row_by_phone(ws_emp, chosen_phone)
-
-cur_prix = 0.0
-if row_idx:
+def _to_float(x):
     try:
-        valp = ws_emp.cell(row_idx, col_prix).value or "0"
-        cur_prix = _to_float(valp)
+        return float(str(x).replace(",", ".").strip())
     except:
-        cur_prix = 0.0
+        return 0.0
 
-# ---- سعر التسجيل كـ liste déroulante ----
-prix_presets = [0, 200, 300, 400, 500, 600, 800, 1000]
-label_presets = [f"{p} (مسبق)" for p in prix_presets]
-options_prix = label_presets + ["مخصّص"]
-
-# نحاول نطابق القيمة الحالية مع أقرب preset
-try:
-    idx_default = prix_presets.index(int(cur_prix))
-    default_opt = label_presets[idx_default]
-except:
-    default_opt = "مخصّص"
-
-cP1, cP2, cP3 = st.columns(3)
-with cP1:
-    prix_choice = st.selectbox("💵 سعر التسجيل (إجمالي)", options_prix, index=options_prix.index(default_opt))
-with cP2:
-    prix_custom = st.number_input("أو أدخل سعر مخصّص", min_value=0.0, value=float(cur_prix if default_opt=="مخصّص" else 0.0), step=10.0)
-with cP3:
-    if st.button("حفظ السعر", key="save_prix_dd"):
-        try:
-            prix_to_save = prix_custom if prix_choice == "مخصّص" else float(prix_presets[options_prix.index(prix_choice)])
-            ws_emp.update_cell(row_idx, col_prix, str(prix_to_save))
-            st.success("✔️ تم حفظ سعر التسجيل")
-            st.cache_data.clear()
-            cur_prix = prix_to_save
-        except Exception as e:
-            st.error(f"❌ خطأ في حفظ السعر: {e}")
-
-# جدول المدفوعات السابقة
-df_pay = read_payments_for(chosen_phone, employe=employee)
-total_paid = float(df_pay["Montant"].sum()) if not df_pay.empty else 0.0
-reste = max(cur_prix - total_paid, 0.0)
-
-st.metric("إجمالي المدفوع", f"{total_paid:,.0f}")
-st.metric("المتبقي", f"{reste:,.0f}")
-
-st.markdown("#### 📜 تاريخ المدفوعات")
-if df_pay.empty:
-    st.info("لا توجد مدفوعات للعميل بعد.")
-else:
-    st.dataframe(
-        df_pay[["Date paiement","Montant","Note"]],
-        use_container_width=True,
-        hide_index=True
-    )
-
-# ---- إضافة دفعة كـ liste déroulante ----
-st.markdown("#### ➕ إضافة دفعة")
-with st.form("add_payment_form_dd"):
-    cA, cB, cC = st.columns(3)
-
-    # Presets يعتمدوا على المتبقي + مبالغ شائعة
-    quick_amounts = sorted(set([50, 100, 150, 200, 300, 400, 500, int(reste) if reste > 0 else 0]))
-    quick_labels = [f"{amt} (سريع)" if amt != int(reste) else f"{amt} (المتبقي)" for amt in quick_amounts if amt > 0]
-    amt_options = quick_labels + ["مخصّص"]
-
-    with cA:
-        amt_choice = st.selectbox("المبلغ", amt_options, index=(len(quick_labels)-1 if int(reste)>0 else 0))
-        amt_custom = st.number_input("مبلغ مخصّص", min_value=0.0, value=0.0, step=10.0)
-
-    with cB:
-        pay_date = st.date_input("تاريخ الدفع", value=date.today())
-        pay_method = st.selectbox("طريقة الدفع", ["نقدي", "تحويل بنكي", "D17", "شيك", "أخرى"])
-
-    with cC:
-        pay_note = st.text_input("ملاحظة", placeholder="مثال: دفعة أولى / مرجع التحويل…")
-
-    submit_pay = st.form_submit_button("إضافة الدفعة")
-    if submit_pay:
-        # حدّد المبلغ النهائي
-        if amt_choice == "مخصّص":
-            amount_final = float(amt_custom)
+def ensure_price_column(ws):
+    """يتأكّد اللي عمود 'Prix inscription' موجود في ورقة الموظّف، وإذا مش موجود يضيفو."""
+    header = ws.row_values(1) or []
+    if "Prix inscription" not in header:
+        header = (header + [""] * (len(EXPECTED_HEADERS) - len(header)))[:len(EXPECTED_HEADERS)]
+        # نزّدو العامود في الآخر لو مش ضمن EXPECTED_HEADERS
+        if "Prix inscription" not in EXPECTED_HEADERS:
+            # نحدّث الهيدر في الشيت و نضيف اسم العمود في آخر عمود
+            ws.update("1:1", [header + ["Prix inscription"]])
+            return header + ["Prix inscription"]
         else:
-            # استخرج الرقم من اللابل "XXX (..)"
-            amount_final = float(amt_choice.split(" ")[0])
+            # لو هو ضمن EXPECTED_HEADERS نحترمو ترتيبو
+            pos = EXPECTED_HEADERS.index("Prix inscription")
+            if len(header) < pos + 1:
+                header += [""] * (pos + 1 - len(header))
+            header[pos] = "Prix inscription"
+            ws.update("1:1", [header])
+            return header
+    return header
 
-        if amount_final <= 0:
-            st.warning("رجاءً اختر مبلغًا صالحًا.")
-        else:
-            try:
-                extra_note = pay_method if pay_method != "أخرى" else ""
-                note_final = (extra_note + (" - " if extra_note and pay_note else "") + (pay_note or "")).strip()
-                append_payment(chosen_phone, (new_name or cur_name), employee, pay_date, amount_final, note_final)
-                st.success("✅ تمت إضافة الدفعة")
-                st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء الإضافة: {e}")   
+def read_payments_for(phone_norm, employe):
+    """يقرا الدفعات من ورقة 'Paiements' (تنشأ تلقائيًا إذا مش موجودة)."""
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws_pay = sh.worksheet("Paiements")
+    except gspread.exceptions.WorksheetNotFound:
+        ws_pay = sh.add_worksheet(title="Paiements", rows="2000", cols="10")
+        ws_pay.update("1:1", [["Employe","Téléphone","Nom","Date paiement","Montant","Note"]])
+    vals = ws_pay.get_all_values()
+    if len(vals) <= 1:
+        return pd.DataFrame(columns=["Employe","Téléphone","Nom","Date paiement","Montant","Note"])
+    df = pd.DataFrame(vals[1:], columns=vals[0])
+    df = df[(df["Employe"] == employe) & (df["Téléphone"].apply(normalize_tn_phone) == phone_norm)]
+    # تحويل المبلغ لرقم
+    df["Montant"] = df["Montant"].apply(_to_float)
+    return df
+
+def append_payment(phone_norm, nom, employe, dte, amount, note=""):
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws_pay = sh.worksheet("Paiements")
+    except gspread.exceptions.WorksheetNotFound:
+        ws_pay = sh.add_worksheet(title="Paiements", rows="2000", cols="10")
+        ws_pay.update("1:1", [["Employe","Téléphone","Nom","Date paiement","Montant","Note"]])
+    ws_pay.append_row([
+        employe,
+        phone_norm,
+        nom,
+        fmt_date(dte),
+        str(amount),
+        note or ""
+    ])
+
+if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_phone:
+    ws_emp = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+    header_emp = ensure_price_column(ws_emp)
+    # حدّد إندكس عمود السعر
+    if "Prix inscription" in header_emp:
+        col_prix = header_emp.index("Prix inscription") + 1
+    else:
+        # احتياط: لو موجود في EXPECTED_HEADERS
+        col_prix = EXPECTED_HEADERS.index("Prix inscription") + 1 if "Prix inscription" in EXPECTED_HEADERS else None
+
+    row_idx = find_row_by_phone(ws_emp, chosen_phone)
+
+    with st.expander("💳 المدفوعات — إضغط لفتح", expanded=False):
+        # ===== سعر التسجيل (Expander فرعي) =====
+        with st.expander("سعر التسجيل (إجمالي)", expanded=False):
+            cur_prix = 0.0
+            if row_idx and col_prix:
+                try:
+                    valp = ws_emp.cell(row_idx, col_prix).value or "0"
+                    cur_prix = _to_float(valp)
+                except:
+                    cur_prix = 0.0
+
+            prix_presets = [200, 300, 400, 500, 600, 800, 1000]
+            labels = [f"{p}" for p in prix_presets] + ["مخصّص"]
+            # اختر default: إذا القيمة الحالية ضمن presets اختارها وإلا "مخصّص"
+            default_opt = labels[-1]
+            for p in prix_presets:
+                if int(cur_prix) == int(p):
+                    default_opt = f"{p}"
+                    break
+
+            cP1, cP2, cP3 = st.columns(3)
+            with cP1:
+                prix_choice = st.selectbox("💵 إختر السعر", labels, index=labels.index(default_opt))
+            with cP2:
+                prix_custom = st.number_input("أو أدخل سعر مخصّص", min_value=0.0, value=float(cur_prix if default_opt=="مخصّص" else 0.0), step=10.0)
+            with cP3:
+                if st.button("حفظ السعر", key="save_prix_dd"):
+                    try:
+                        prix_to_save = prix_custom if prix_choice == "مخصّص" else float(prix_choice)
+                        if row_idx and col_prix:
+                            ws_emp.update_cell(row_idx, col_prix, str(prix_to_save))
+                            st.success("✔️ تم حفظ سعر التسجيل")
+                            st.cache_data.clear()
+                            cur_prix = prix_to_save
+                        else:
+                            st.warning("تعذّر تحديد مكان الحفظ في الشيت.")
+                    except Exception as e:
+                        st.error(f"❌ خطأ في حفظ السعر: {e}")
+
+        # ===== جدول المدفوعات + إضافة دفعة (Expander فرعي) =====
+        with st.expander("إضافة دفعة / عرض التاريخ", expanded=False):
+            # جدول المدفوعات السابقة
+            df_pay = read_payments_for(chosen_phone, employe=employee)
+            total_paid = float(df_pay["Montant"].sum()) if not df_pay.empty else 0.0
+            reste = max((cur_prix or 0.0) - total_paid, 0.0)
+
+            cM1, cM2, _ = st.columns(3)
+            with cM1:
+                st.metric("إجمالي المدفوع", f"{total_paid:,.0f}")
+            with cM2:
+                st.metric("المتبقي", f"{reste:,.0f}")
+
+            st.markdown("#### 📜 تاريخ المدفوعات")
+            if df_pay.empty:
+                st.info("لا توجد مدفوعات للعميل بعد.")
+            else:
+                st.dataframe(
+                    df_pay[["Date paiement","Montant","Note"]],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            # إضافة دفعة
+            st.markdown("#### ➕ إضافة دفعة")
+            with st.form("add_payment_form_dd"):
+                cA, cB, cC = st.columns(3)
+
+                quick_amounts = sorted(set([50, 100, 150, 200, 300, 400, 500, int(reste) if reste > 0 else 0]))
+                quick_labels = [f"{amt}" for amt in quick_amounts if amt > 0] + ["مخصّص"]
+
+                with cA:
+                    amt_choice = st.selectbox("المبلغ", quick_labels, index=(len(quick_labels)-2 if int(reste)>0 else 0))
+                    amt_custom = st.number_input("مبلغ مخصّص", min_value=0.0, value=0.0, step=10.0)
+
+                with cB:
+                    pay_date = st.date_input("تاريخ الدفع", value=date.today())
+                    pay_method = st.selectbox("طريقة الدفع", ["نقدي", "تحويل بنكي", "D17", "شيك", "أخرى"])
+
+                with cC:
+                    pay_note = st.text_input("ملاحظة", placeholder="مثال: دفعة أولى / مرجع التحويل…")
+
+                submit_pay = st.form_submit_button("إضافة الدفعة")
+                if submit_pay:
+                    # حدّد المبلغ النهائي
+                    amount_final = float(amt_custom) if amt_choice == "مخصّص" else float(amt_choice)
+                    if amount_final <= 0:
+                        st.warning("رجاءً اختر مبلغًا صالحًا.")
+                    else:
+                        try:
+                            # اسم العميل الحالي (لو عندك new_name من الفورم استعملو، وإلا cur_name)
+                            nom_final = (new_name if 'new_name' in locals() and new_name else cur_name) if 'cur_name' in locals() else ""
+                            extra_note = pay_method if pay_method != "أخرى" else ""
+                            note_final = (extra_note + (" - " if extra_note and pay_note else "") + (pay_note or "")).strip()
+                            append_payment(chosen_phone, nom_final, employee, pay_date, amount_final, note_final)
+                            st.success("✅ تمت إضافة الدفعة")
+                            st.cache_data.clear()
+                        except Exception as e:
+                            st.error(f"❌ خطأ أثناء الإضافة: {e}")
+               
 # ===== 📝 ملاحظات (إضافة سريعة بطابع زمني) =====
 if role == "موظف" and employee and not df_emp.empty:
     st.markdown("### 📝 أضف ملاحظة (سريعة)")
