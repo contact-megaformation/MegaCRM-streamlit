@@ -7,7 +7,64 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
+# ===== حماية قسم المدفوعات =====
+from datetime import timedelta
 
+def _get_pay_password_for(user_login: str | None) -> str:
+    """يرجّع كلمة سرّ للمدفوعات: لو عندك سرّ خاص لكل موظّف يفضّل، وإلا يرجّع العامة."""
+    try:
+        secrets = st.secrets["payments_protect"]
+    except Exception:
+        return ""  # لو ما عندكش secrets، يعتبرها فارغة
+    # خاص بالموظف لو موجود
+    if user_login and "by_user" in secrets and user_login in secrets["by_user"]:
+        return secrets["by_user"][user_login]
+    # وإلا العامة
+    return secrets.get("password", "")
+
+def payments_unlocked() -> bool:
+    """يتحقق إذا القسم مفتوح ومازال في المهلة الزمنية."""
+    ok = st.session_state.get("payments_ok", False)
+    ts = st.session_state.get("payments_ok_at")
+    if ok and ts:
+        # مهلة 15 دقيقة من وقت الفتح
+        if datetime.now() - ts <= timedelta(minutes=15):
+            return True
+        else:
+            # انتهت المهلة
+            st.session_state["payments_ok"] = False
+            st.session_state["payments_ok_at"] = None
+    return False
+
+def payments_lock_ui(user_login: str | None):
+    """UI بسيط لفتح/غلق المدفوعات بكلمة سرّ."""
+    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
+        if payments_unlocked():
+            col1, col2 = st.columns([1,1])
+            with col1:
+                st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
+            with col2:
+                if st.button("🔐 قفل الآن"):
+                    st.session_state["payments_ok"] = False
+                    st.session_state["payments_ok_at"] = None
+                    st.info("تم القفل.")
+        else:
+            pwd_cfg = _get_pay_password_for(user_login)
+            if not pwd_cfg:
+                st.warning("⚠️ لم يتم ضبط كلمة سرّ المدفوعات في secrets.toml (payments_protect.password).")
+            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
+            if st.button("🔓 فتح"):
+                if pwd_try and pwd_cfg and pwd_try == pwd_cfg:
+                    st.session_state["payments_ok"] = True
+                    st.session_state["payments_ok_at"] = datetime.now()
+                    st.success("تم الفتح لمدة 15 دقيقة.")
+                else:
+                    st.error("كلمة سرّ غير صحيحة.")
+
+def mask_amount(x):
+    """إخفاء المبالغ وقت القفل."""
+    s = str(x).strip()
+    return "•••" if s else ""
 # ========== Page config ==========
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
@@ -840,3 +897,31 @@ if role == "موظف" and employee:
                         st.cache_data.clear()
                     except Exception as e:
                         st.error(f"❌ خطأ أثناء إضافة الدفعة: {e}")
+# ==== قبل قسم المدفوعات مباشرة ====
+# نفترض عندك المتغيّر employee فيه اسم الموظّف الحالي (أو current_user_login إن كنت عامل نظام login)
+current_user_login = employee  # بدّلها لو عندك نظام مستخدمين مختلف
+
+payments_lock_ui(current_user_login)
+
+# ==== قسم المدفوعات ====
+if payments_unlocked():
+    # ✅ مفتوح: اعرض كل شي عادي وخلي المستخدم يضيف/يعدّل الدفعات
+    st.markdown("### 💵 المدفوعات")
+    # ... (هنا يجي الكود الموجود متاع الإضافة/العرض/الحساب)
+else:
+    # 🔐 مقفول: اسمح بعرض أسماء العملاء فقط، وأخفِ المبالغ
+    st.markdown("### 💵 المدفوعات (مقفولة)")
+    st.info("القسم مقفول. أدخل كلمة السرّ أعلاه لفتح التفاصيل.")
+    # لو تحب تظهر جدول العملاء بدون مبالغ:
+    try:
+        # df_payments_all: DataFrame فيه دفعات (لو موجود عندك). وإلا تجاهل الجزئية هاذي.
+        df_preview = df_payments_all.copy()
+        for col in ["Prix formation", "Montant", "Reste"]:
+            if col in df_preview.columns:
+                df_preview[col] = df_preview[col].apply(mask_amount)
+        st.dataframe(df_preview, use_container_width=True)
+    except Exception:
+        pass
+if not payments_unlocked():
+    st.stop()  # يوقف تنفيذ باقي القسم
+# ثم بقية كود المدفوعات
