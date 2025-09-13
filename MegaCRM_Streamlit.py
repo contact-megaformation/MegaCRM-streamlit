@@ -239,6 +239,58 @@ else:
         st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     with c5:
         st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+        # ================== 📊 Dashboard المدفوعات ==================
+if role == "أدمن":
+    st.subheader("💳 إحصائيات المدفوعات")
+
+    def _ensure_paiements_sheet(sh):
+        try:
+            return sh.worksheet("Paiements")
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet(title="Paiements", rows="2000", cols="10")
+            ws.update("1:1", [["Employe","Téléphonique","Nom","Date paiement","Montant"]])
+            return ws
+
+    def _to_float(x):
+        try:
+            return float(str(x).replace(",", ".").strip())
+        except:
+            return 0.0
+
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        ws_pay = _ensure_paiements_sheet(sh)
+        vals = ws_pay.get_all_values()
+
+        if len(vals) <= 1:
+            st.info("❕ لا توجد بيانات مدفوعات بعد.")
+        else:
+            df_pay = pd.DataFrame(vals[1:], columns=vals[0])
+            df_pay["Montant"] = df_pay["Montant"].apply(_to_float)
+            df_pay["Date paiement"] = pd.to_datetime(df_pay["Date paiement"], dayfirst=True, errors="coerce")
+
+            today = datetime.now().date()
+            this_month = today.strftime("%m-%Y")
+
+            total_all = df_pay["Montant"].sum()
+            total_today = df_pay[df_pay["Date paiement"].dt.date == today]["Montant"].sum()
+            total_month = df_pay[df_pay["Date paiement"].dt.strftime("%m-%Y") == this_month]["Montant"].sum()
+
+            c1, c2, c3 = st.columns(3)
+            with c1:
+                st.metric("💰 مجموع المدفوعات الكلي", f"{total_all:,.0f}")
+            with c2:
+                st.metric("📅 مدفوعات اليوم", f"{total_today:,.0f}")
+            with c3:
+                st.metric("🗓️ مدفوعات هذا الشهر", f"{total_month:,.0f}")
+
+            # جدول آخر 10 مدفوعات
+            st.markdown("#### 📋 آخر 10 مدفوعات")
+            last10 = df_pay.sort_values("Date paiement", ascending=False).head(10)
+            st.dataframe(last10[["Nom","Employe","Date paiement","Montant"]], use_container_width=True)
+
+    except Exception as e:
+        st.error(f"❌ خطأ في تحميل المدفوعات: {e}")
 
     # -------- تجميع حسب الموظّف --------
     df_dash["__added_today"] = added_today_mask
@@ -559,39 +611,101 @@ if not df_emp.empty:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-# ===== 📝 ملاحظات (إضافة سريعة بطابع زمني) =====
-if role == "موظف" and employee and not df_emp.empty:
-    st.markdown("### 📝 أضف ملاحظة (سريعة)")
-    scope_df = filtered_df if not filtered_df.empty else df_emp
-    scope_df = scope_df.copy()
-    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-    tel_to_update_key = st.selectbox(
-        "اختر العميل",
-        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-        key="note_quick_pick"
-    )
-    tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-    new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
-    if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
-        if new_note_quick.strip() == "":
-            st.warning("⚠️ الملاحظة فارغة!")
-        else:
+# ======================= 💳 إدارة المدفوعات =======================
+        def _to_float(x):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                row_idx = find_row_by_phone(ws, tel_to_update)
-                if not row_idx:
-                    st.error("❌ لم يتم إيجاد العميل بالهاتف.")
-                else:
-                    rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                    old_remark = ws.cell(row_idx, rem_col).value or ""
-                    stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                    updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
-                    ws.update_cell(row_idx, rem_col, updated)
-                    st.success("✅ تمت إضافة الملاحظة")
-                    st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
+                return float(str(x).replace(",", ".").strip())
+            except:
+                return 0.0
 
+        def _ensure_paiements_sheet(sh):
+            try:
+                return sh.worksheet("Paiements")
+            except gspread.exceptions.WorksheetNotFound:
+                ws = sh.add_worksheet(title="Paiements", rows="2000", cols="10")
+                ws.update("1:1", [["Employe","Téléphonique","Nom","Date paiement","Montant"]])
+                return ws
+
+        def _read_payments_for(sh, phone_norm, employe):
+            ws_pay = _ensure_paiements_sheet(sh)
+            vals = ws_pay.get_all_values()
+            if len(vals) <= 1:
+                return pd.DataFrame(columns=["Employe","Téléphonique","Nom","Date paiement","Montant"])
+            df = pd.DataFrame(vals[1:], columns=vals[0])
+            if "Téléphonique" not in df.columns and "Téléphone" in df.columns:
+                df = df.rename(columns={"Téléphone": "Téléphonique"})
+            df["Montant"] = df["Montant"].apply(_to_float)
+            df["_tel_norm"] = df["Téléphonique"].apply(normalize_tn_phone)
+            return df[(df["Employe"] == employe) & (df["_tel_norm"] == phone_norm)].copy()
+
+        def _ensure_price_column(ws_emp):
+            header = ws_emp.row_values(1) or []
+            if "Prix inscription" not in header:
+                header.append("Prix inscription")
+                ws_emp.update("1:1", [header])
+
+        def _get_set_price(ws_emp, row_idx, new_price=None):
+            _ensure_price_column(ws_emp)
+            header = ws_emp.row_values(1)
+            col = header.index("Prix inscription") + 1
+            if new_price is None:
+                val = ws_emp.cell(row_idx, col).value or "0"
+                return _to_float(val)
+            else:
+                ws_emp.update_cell(row_idx, col, str(new_price))
+                return float(new_price)
+
+        # Bloc المدفوعات
+        if chosen_phone:
+            sh = client.open_by_key(SPREADSHEET_ID)
+            ws_emp = sh.worksheet(employee)
+            row_idx = find_row_by_phone(ws_emp, chosen_phone)
+            if row_idx:
+                cur_name_for_pay = ws_emp.cell(row_idx, EXPECTED_HEADERS.index("Nom & Prénom")+1).value or ""
+                current_price = _get_set_price(ws_emp, row_idx, new_price=None)
+                df_payments = _read_payments_for(sh, chosen_phone, employee)
+                total_paid_before = float(df_payments["Montant"].sum()) if not df_payments.empty else 0.0
+                remain_before = max(current_price - total_paid_before, 0.0)
+
+                with st.expander("💳 المدفوعات — اضغط للفتح", expanded=False):
+                    c1, c2, c3 = st.columns(3)
+                    with c1:
+                        price_input = st.number_input("💵 سعر التكوين", min_value=0.0, value=float(current_price), step=10.0, key="price_input")
+                    with c2:
+                        st.metric("إجمالي مدفوع (قديم)", f"{total_paid_before:,.0f}")
+                    with c3:
+                        st.metric("المتبقي (قبل الإضافة)", f"{remain_before:,.0f}")
+
+                    st.markdown("#### ➕ إضافة دفعة جديدة")
+                    d1, d2 = st.columns(2)
+                    with d1:
+                        pay_amount = st.number_input("المبلغ المدفوع اليوم", min_value=0.0, value=0.0, step=10.0, key="pay_amount")
+                    with d2:
+                        pay_date = st.date_input("تاريخ الدفع", value=date.today(), key="pay_date")
+
+                    if st.button("💾 حفظ السعر + إضافة الدفعة", type="primary", key="save_pay_btn"):
+                        try:
+                            new_price = float(price_input)
+                            if not math.isclose(new_price, current_price):
+                                current_price = _get_set_price(ws_emp, row_idx, new_price=new_price)
+
+                            if pay_amount > 0:
+                                ws_pay = _ensure_paiements_sheet(sh)
+                                ws_pay.append_row([employee, chosen_phone, cur_name_for_pay, fmt_date(pay_date), str(pay_amount)])
+
+                            df_after = _read_payments_for(sh, chosen_phone, employee)
+                            total_paid_after = float(df_after["Montant"].sum()) if not df_after.empty else 0.0
+                            remain_after = max(current_price - total_paid_after, 0.0)
+
+                            st.success("✅ تم الحفظ.")
+                            st.info(f"إجمالي المدفوع: **{total_paid_after:,.0f}** — المتبقي: **{remain_after:,.0f}**")
+
+                            if not df_after.empty:
+                                st.dataframe(df_after[["Date paiement","Montant"]], use_container_width=True, hide_index=True)
+
+                            st.cache_data.clear()
+                        except Exception as e:
+                            st.error(f"❌ خطأ أثناء الحفظ: {e}")
 # ===== 🎨 Tag =====
 if role == "موظف" and employee and not df_emp.empty:
     st.markdown("### 🎨 اختر لون/Tag للعميل")
