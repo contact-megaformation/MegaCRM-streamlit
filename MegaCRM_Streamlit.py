@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer
+# MegaCRM_Streamlit_App.py — Cloud + Local + Dashboard + Search/Filters + Dedup + Styling + WhatsApp + Hide Footer + Paiements
 
 import json
 import streamlit as st
@@ -7,6 +7,7 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
+
 # ========== Page config ==========
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
@@ -49,7 +50,8 @@ client, SPREADSHEET_ID = make_client_and_sheet_id()
 EXPECTED_HEADERS = [
     "Nom & Prénom","Téléphone","Type de contact","Formation",
     "Remarque","Date ajout","Date de suivi","Alerte",
-    "Inscription","Employe","Tag"
+    "Inscription","Employe","Tag",
+    "Prix inscription"  # ⬅️ جديد لسعر التسجيل
 ]
 
 # ===== Helpers =====
@@ -105,6 +107,53 @@ def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription", "")).strip().lower()
     is_inscrit = insc in ("inscrit", "oui")
     return ['background-color: #d6f5e8' if is_inscrit else '' for _ in row.index]
+
+# ====== Paiements helpers (جديد) ======
+def get_or_create_payments_ws():
+    """يرجّع ورقة Paiements، ويخلقها إذا ما لقاهاش."""
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet("Paiements")
+    except gspread.exceptions.WorksheetNotFound:
+        ws = sh.add_worksheet(title="Paiements", rows="1000", cols="10")
+        ws.update("1:1", [[
+            "Téléphone_norm","Nom & Prénom","Employe",
+            "Date paiement","Montant","Note"
+        ]])
+    return ws
+
+def _to_float(x):
+    try:
+        return float(str(x).replace(",", "."))
+    except:
+        return 0.0
+
+def read_payments_for(phone_norm: str, employe: str|None=None) -> pd.DataFrame:
+    """يرجّع DataFrame لمدفوعات هاتف معيّن (و/أو موظّف)."""
+    ws = get_or_create_payments_ws()
+    rows = ws.get_all_values()
+    if not rows:
+        return pd.DataFrame(columns=["Téléphone_norm","Nom & Prénom","Employe","Date paiement","Montant","Note"])
+    header = rows[0]
+    data = rows[1:]
+    dfp = pd.DataFrame(data, columns=header)
+    dfp = dfp[dfp["Téléphone_norm"].astype(str) == str(phone_norm)]
+    if employe is not None:
+        dfp = dfp[dfp["Employe"].astype(str) == str(employe)]
+    if not dfp.empty:
+        dfp["Montant"] = dfp["Montant"].apply(_to_float)
+    return dfp
+
+def append_payment(phone_norm: str, nom: str, employe: str, dte: date, montant: float, note: str):
+    ws = get_or_create_payments_ws()
+    ws.append_row([
+        str(phone_norm),
+        str(nom),
+        str(employe),
+        fmt_date(dte),
+        str(montant),
+        str(note or "")
+    ])
 
 # ===== تحميل كل أوراق الموظفين =====
 @st.cache_data(ttl=600)
@@ -466,7 +515,7 @@ if role == "موظف" and employee:
         st.markdown("### 🚨 عملاء مع تنبيهات")
         render_table(alerts_df)
 
-# ===== ✏️ تعديل بيانات عميل (اسم/هاتف/تكوين/تواريخ/تسجيل/ملاحظة) =====
+# ===== ✏️ تعديل بيانات عميل (اسم/هاتف/تكوين/تواريخ/تسجيل/ملاحظة) + 💳 Paiements =====
 if not df_emp.empty:
     st.markdown("### ✏️ تعديل بيانات عميل")
     df_emp_edit = df_emp.copy()
@@ -559,6 +608,76 @@ if not df_emp.empty:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
+        # ========== 💳 المدفوعات لهذا العميل ==========
+        st.markdown("### 💳 المدفوعات")
+
+        # عمود سعر التسجيل في نفس شيت الموظّف
+        col_prix = EXPECTED_HEADERS.index("Prix inscription") + 1
+        ws_emp = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+        row_idx = find_row_by_phone(ws_emp, chosen_phone)
+        cur_prix = 0.0
+        if row_idx:
+            try:
+                valp = ws_emp.cell(row_idx, col_prix).value or "0"
+                cur_prix = _to_float(valp)
+            except:
+                cur_prix = 0.0
+
+        colP1, colP2, colP3 = st.columns(3)
+        with colP1:
+            prix_insc = st.number_input("💵 سعر التسجيل (مجموع)", min_value=0.0, value=float(cur_prix), step=10.0, key="prix_insc_input")
+        with colP2:
+            if st.button("حفظ السعر", key="save_prix"):
+                try:
+                    ws_emp.update_cell(row_idx, col_prix, str(prix_insc))
+                    st.success("✔️ تم حفظ سعر التسجيل")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ في حفظ السعر: {e}")
+
+        # جدول المدفوعات السابقة
+        df_pay = read_payments_for(chosen_phone, employe=employee)
+        total_paid = float(df_pay["Montant"].sum()) if not df_pay.empty else 0.0
+        reste = max(prix_insc - total_paid, 0.0)
+
+        with colP3:
+            st.metric("المتبقي", f"{reste:,.0f}")
+
+        st.metric("إجمالي المدفوع", f"{total_paid:,.0f}")
+
+        st.markdown("#### 📜 تاريخ المدفوعات")
+        if df_pay.empty:
+            st.info("لا توجد مدفوعات للعميل بعد.")
+        else:
+            st.dataframe(
+                df_pay[["Date paiement","Montant","Note"]],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        # إضافة دفعة جديدة
+        st.markdown("#### ➕ إضافة دفعة")
+        with st.form("add_payment_form"):
+            colA, colB, colC = st.columns(3)
+            with colA:
+                pay_amount = st.number_input("المبلغ المدفوع", min_value=0.0, step=10.0, key="pay_amount")
+            with colB:
+                pay_date = st.date_input("تاريخ الدفع", value=date.today(), key="pay_date")
+            with colC:
+                pay_note = st.text_input("ملاحظة", key="pay_note", placeholder="نقدي/تحويل/…")
+            submit_pay = st.form_submit_button("إضافة الدفعة")
+            if submit_pay:
+                if pay_amount <= 0:
+                    st.warning("رجاءً أدخل مبلغًا صحيحًا.")
+                else:
+                    try:
+                        # نمرر الاسم الجديد إن غيّرته وإلاّ الاسم الحالي
+                        append_payment(chosen_phone, (new_name or cur_name), employee, pay_date, pay_amount, pay_note)
+                        st.success("✅ تمت إضافة الدفعة")
+                        st.cache_data.clear()
+                    except Exception as e:
+                        st.error(f"❌ خطأ أثناء الإضافة: {e}")
+
 # ===== 📝 ملاحظات (إضافة سريعة بطابع زمني) =====
 if role == "موظف" and employee and not df_emp.empty:
     st.markdown("### 📝 أضف ملاحظة (سريعة)")
@@ -648,7 +767,7 @@ if role == "موظف" and employee:
                         insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
                         ws.append_row([
                             nom, tel, type_contact, formation, "",
-                            fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""
+                            fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, "",  # Prix inscription فارغة
                         ])
                         st.success("✅ تم إضافة العميل")
                         st.cache_data.clear()
