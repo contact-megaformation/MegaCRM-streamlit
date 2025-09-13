@@ -611,8 +611,9 @@ if not df_emp.empty:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-# ======================= 💳 إدارة المدفوعات =======================
 
+
+# ======================= 💳 المدفوعات (بلا ملاحظات) =======================
 import math
 
 def _to_float(x):
@@ -631,7 +632,7 @@ def _ensure_paiements_sheet(sh):
         return ws
 
 def _read_payments_for(sh, phone_norm, employe):
-    """يرجع DataFrame للمدفوعات الخاصة بعميل معيّن/موظف معيّن."""
+    """يرجع DataFrame لكل الدفعات الخاصة بالعميل/الموظف."""
     ws_pay = _ensure_paiements_sheet(sh)
     vals = ws_pay.get_all_values()
     if len(vals) <= 1:
@@ -644,7 +645,7 @@ def _read_payments_for(sh, phone_norm, employe):
     return df[(df["Employe"] == employe) & (df["_tel_norm"] == phone_norm)].copy()
 
 def _ensure_price_column(ws_emp):
-    """يضمن وجود عمود Prix inscription في ورقة الموظف."""
+    """يضمن وجود عمود Prix inscription في هيدر ورقة الموظف."""
     header = ws_emp.row_values(1) or []
     if "Prix inscription" not in header:
         header.append("Prix inscription")
@@ -662,13 +663,12 @@ def _get_set_price(ws_emp, row_idx, new_price=None):
         ws_emp.update_cell(row_idx, col, str(new_price))
         return float(new_price)
 
-# ---- Bloc داخل واجهة الموظف ----
 if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_phone:
     sh = client.open_by_key(SPREADSHEET_ID)
     ws_emp = sh.worksheet(employee)
     row_idx = find_row_by_phone(ws_emp, chosen_phone)
     if row_idx:
-        # جلب اسم العميل للتسجيل في Paiements
+        # الاسم الحالي (للتسجيل في سجل Paiements)
         cur_name_for_pay = ws_emp.cell(row_idx, EXPECTED_HEADERS.index("Nom & Prénom")+1).value or ""
 
         current_price = _get_set_price(ws_emp, row_idx, new_price=None)
@@ -679,27 +679,27 @@ if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_pho
         with st.expander("💳 المدفوعات — اضغط للفتح", expanded=False):
             c1, c2, c3 = st.columns(3)
             with c1:
-                price_input = st.number_input("💵 سعر التكوين", min_value=0.0, value=float(current_price), step=10.0, key="price_input")
+                price_input = st.number_input("💵 سعر التكوين", min_value=0.0, value=float(current_price), step=10.0, key="price_input_v3")
             with c2:
-                st.metric("إجمالي مدفوع (قديم)", f"{total_paid_before:,.0f}")
+                st.metric("إجمالي المدفوع (قديماً)", f"{total_paid_before:,.0f}")
             with c3:
                 st.metric("المتبقي (قبل الإضافة)", f"{remain_before:,.0f}")
 
             st.markdown("#### ➕ إضافة دفعة جديدة")
             d1, d2 = st.columns(2)
             with d1:
-                pay_amount = st.number_input("المبلغ المدفوع اليوم", min_value=0.0, value=0.0, step=10.0, key="pay_amount")
+                pay_amount = st.number_input("المبلغ المدفوع اليوم", min_value=0.0, value=0.0, step=10.0, key="pay_amount_v3")
             with d2:
-                pay_date = st.date_input("تاريخ الدفع", value=date.today(), key="pay_date")
+                pay_date = st.date_input("تاريخ الدفع", value=date.today(), key="pay_date_v3")
 
-            if st.button("💾 حفظ السعر + إضافة الدفعة", type="primary", key="save_pay_btn"):
+            if st.button("💾 حفظ السعر + إضافة الدفعة", type="primary", key="save_pay_btn_v3"):
                 try:
-                    # 1) تحديث السعر إذا تبدل
+                    # 1) حدّث السعر لو تغيّر
                     new_price = float(price_input)
                     if not math.isclose(new_price, current_price):
                         current_price = _get_set_price(ws_emp, row_idx, new_price=new_price)
 
-                    # 2) إضافة دفعة جديدة
+                    # 2) أضف الدفعة
                     if pay_amount > 0:
                         ws_pay = _ensure_paiements_sheet(sh)
                         ws_pay.append_row([
@@ -710,7 +710,7 @@ if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_pho
                             str(pay_amount)
                         ])
 
-                    # 3) إعادة الحساب
+                    # 3) أعد الحساب
                     df_after = _read_payments_for(sh, chosen_phone, employee)
                     total_paid_after = float(df_after["Montant"].sum()) if not df_after.empty else 0.0
                     remain_after = max(current_price - total_paid_after, 0.0)
