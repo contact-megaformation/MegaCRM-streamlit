@@ -584,6 +584,7 @@ if not df_emp.empty:
                         st.stop()
 
             # تحديث الحقول الأساسية
+
                     ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                     ws.update_cell(row_idx, col_map["Téléphone"], new_phone_norm)
                     ws.update_cell(row_idx, col_map["Formation"], new_formation.strip())
@@ -609,8 +610,79 @@ if not df_emp.empty:
                 st.error(f"❌ خطأ أثناء التعديل: {e}")
 
 
+                    st.success("✅ تم الحفظ.")
+                    st.info(f"إجمالي المدفوع: **{total_paid_after:,.0f}** — المتبقي: **{remain_after:,.0f}**")
 
-# ======================= 💳 المدفوعات (بلا ملاحظات) =======================
+                    if not df_after.empty:
+                        st.dataframe(
+                            df_after[["Date paiement","Montant"]],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء الحفظ: {e}")
+
+# ===== 🎨 Tag =====
+if role == "موظف" and employee and not df_emp.empty:
+    st.markdown("### 🎨 اختر لون/Tag للعميل")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_color_key = st.selectbox(
+        "اختر العميل",
+        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+        key="tag_select"
+    )
+    tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
+    hex_color = st.color_picker("اختر اللون")
+    if st.button("🖌️ تلوين"):
+        try:
+            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+            row_idx = find_row_by_phone(ws, tel_color)
+            if not row_idx:
+                st.error("❌ لم يتم إيجاد العميل.")
+            else:
+                color_cell = EXPECTED_HEADERS.index("Tag") + 1
+                ws.update_cell(row_idx, color_cell, hex_color)
+                st.success("✅ تم التلوين")
+                st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ أثناء الحفظ: {e}")
+
+# ===== ➕ إضافة عميل (الموظف) =====
+if role == "موظف" and employee:
+    st.markdown("### ➕ أضف عميل جديد")
+    with st.form("emp_add_client"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nom = st.text_input("👤 الاسم و اللقب")
+            tel_raw = st.text_input("📞 رقم الهاتف")
+            formation = st.text_input("📚 التكوين")
+            inscription = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"])
+        with col2:
+            type_contact = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
+            date_ajout_in = st.date_input("🕓 تاريخ الإضافة", value=date.today())
+            date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
+
+        submitted = st.form_submit_button("📥 أضف العميل")
+        if submitted:
+            if not (nom and tel_raw and formation):
+                st.error("❌ الرجاء ملء جميع الحقول الأساسية")
+            else:
+                try:
+                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    tel = normalize_tn_phone(tel_raw)
+                    if tel in ALL_PHONES:
+                        st.warning("⚠️ الرقم موجود مسبقًا في النظام")
+                    else:
+                        insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
+                        ws.append_row([
+                            nom, tel, type_contact, formation, "",
+                            fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, "",  # Prix inscription فارغة
+                        ])
+                        # ======================= 💳 المدفوعات (بلا ملاحظات) =======================
 import math
 
 def _to_float(x):
@@ -725,69 +797,6 @@ if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_pho
                     st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الحفظ: {e}")
-
-# ===== 🎨 Tag =====
-if role == "موظف" and employee and not df_emp.empty:
-    st.markdown("### 🎨 اختر لون/Tag للعميل")
-    scope_df = filtered_df if not filtered_df.empty else df_emp
-    scope_df = scope_df.copy()
-    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-    tel_color_key = st.selectbox(
-        "اختر العميل",
-        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-        key="tag_select"
-    )
-    tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
-    hex_color = st.color_picker("اختر اللون")
-    if st.button("🖌️ تلوين"):
-        try:
-            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-            row_idx = find_row_by_phone(ws, tel_color)
-            if not row_idx:
-                st.error("❌ لم يتم إيجاد العميل.")
-            else:
-                color_cell = EXPECTED_HEADERS.index("Tag") + 1
-                ws.update_cell(row_idx, color_cell, hex_color)
-                st.success("✅ تم التلوين")
-                st.cache_data.clear()
-        except Exception as e:
-            st.error(f"❌ خطأ أثناء الحفظ: {e}")
-
-# ===== ➕ إضافة عميل (الموظف) =====
-if role == "موظف" and employee:
-    st.markdown("### ➕ أضف عميل جديد")
-    with st.form("emp_add_client"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nom = st.text_input("👤 الاسم و اللقب")
-            tel_raw = st.text_input("📞 رقم الهاتف")
-            formation = st.text_input("📚 التكوين")
-            inscription = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"])
-        with col2:
-            type_contact = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
-            date_ajout_in = st.date_input("🕓 تاريخ الإضافة", value=date.today())
-            date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
-
-        submitted = st.form_submit_button("📥 أضف العميل")
-        if submitted:
-            if not (nom and tel_raw and formation):
-                st.error("❌ الرجاء ملء جميع الحقول الأساسية")
-            else:
-                try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                    tel = normalize_tn_phone(tel_raw)
-                    if tel in ALL_PHONES:
-                        st.warning("⚠️ الرقم موجود مسبقًا في النظام")
-                    else:
-                        insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
-                        ws.append_row([
-                            nom, tel, type_contact, formation, "",
-                            fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, "",  # Prix inscription فارغة
-                        ])
-                        st.success("✅ تم إضافة العميل")
-                        st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
 # ===== WhatsApp زرّ مباشر =====
 if role == "موظف" and employee and not df_emp.empty:
