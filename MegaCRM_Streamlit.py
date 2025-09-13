@@ -7,6 +7,54 @@ import gspread
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date
 from PIL import Image
+# ===== حماية قسم المدفوعات (Password Lock) =====
+from datetime import timedelta
+
+def _get_pay_password_for(user_login: str | None) -> str:
+    """جيب كلمة السر من secrets (أولوية) وإلا رجّع الافتراضية."""
+    try:
+        # ينجم يكون عندك global أو per-employee
+        # مثال global:
+        pwd = st.secrets.get("PAY_PASSWORD", None)
+        if pwd:
+            return str(pwd)
+        # مثال per-employee: st.secrets["PAY_PASSWORDS"]["Olfa Crm"] = "1234"
+        if user_login and "PAY_PASSWORDS" in st.secrets:
+            return str(st.secrets["PAY_PASSWORDS"].get(user_login, "1234"))
+    except Exception:
+        pass
+    return "1234"  # default إذا ما لقا شيء
+
+def payments_unlocked() -> bool:
+    """يرجع True كان القسم مفتوح في الجلسة ولم تتعدَّ 15 دقيقة."""
+    ok = st.session_state.get("payments_ok", False)
+    at = st.session_state.get("payments_ok_at", None)
+    if not ok or at is None:
+        return False
+    try:
+        return (datetime.now() - at) < timedelta(minutes=15)
+    except Exception:
+        return False
+
+def payments_lock_ui(user_login: str | None):
+    """واجهة القفل/الفتح. وقت يكون مفتوح نعرض إشعار فقط، وقت يكون مسكّر نعرض expander بكلمة السر."""
+    if payments_unlocked():
+        st.success("✅ تم فتح المدفوعات (ينتهي بعد 15 دقيقة).")
+        if st.button("🔐 قفل الآن"):
+            st.session_state["payments_ok"] = False
+            st.session_state["payments_ok_at"] = None
+            st.info("تم القفل.")
+    else:
+        with st.expander("🔒 حماية المدفوعات (Password)", expanded=True):
+            pwd_cfg = _get_pay_password_for(user_login)
+            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
+            if st.button("🔓 فتح"):
+                if pwd_try == pwd_cfg:
+                    st.session_state["payments_ok"] = True
+                    st.session_state["payments_ok_at"] = datetime.now()
+                    st.success("تم الفتح لمدة 15 دقيقة.")
+                else:
+                    st.error("كلمة سرّ غير صحيحة")
 # ===== حماية قسم المدفوعات =====
 from datetime import timedelta
 
@@ -908,6 +956,36 @@ if payments_unlocked():
     # ✅ مفتوح: اعرض كل شي عادي وخلي المستخدم يضيف/يعدّل الدفعات
     st.markdown("### 💵 المدفوعات")
     # ... (هنا يجي الكود الموجود متاع الإضافة/العرض/الحساب)
+# ===== 💵 المدفوعات للعميل المختار =====
+if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_phone:
+    st.markdown("## 💵 المدفوعات")
+
+    # 1) واجهة القفل/الفتح
+    payments_lock_ui(employee)
+
+    # 2) إذا الجلسة مفتوحة، نعرض كل الواجهة. غير ذلك: ما نعرض شيء
+    if payments_unlocked():
+        # --- اكتب هنا كل واجهة الدفع اللي عندك: السعر، المبلغ المدفوع، التاريخ، زر "أضف الدفعة"،
+        # --- ثم جدول المدفوعات + المجاميع (المدفوع، الباقي) ... الخ
+        # مثال مختصر:
+
+        prix = st.number_input("💰 سعر التكوين (Prix)", min_value=0.0, step=10.0, key="pay_prix")
+        mnt = st.number_input("🟩 المبلغ المدفوع (Montant)", min_value=0.0, step=5.0, key="pay_montant")
+        dte = st.date_input("📅 تاريخ الدفع", value=date.today(), key="pay_date")
+
+        if st.button("➕ أضف الدفعة"):
+            # نادِي دالة الحفظ متاعك (append_row في ورقة Payments-<Employee> مثلاً)
+            # save_payment(...)
+
+            st.success("تمت إضافة الدفعة.")
+            st.cache_data.clear()
+
+        # بعد الحفظ اعرض جدول المدفوعات + الحسابات
+        # df_payments = _read_payments_for(...)
+        # st.dataframe(df_payments, use_container_width=True)
+
+    else:
+        st.info("🔒 قسم المدفوعات مقفول. أدخل كلمة السرّ لفتحه من الأعلى.")
 else:
     # 🔐 مقفول: اسمح بعرض أسماء العملاء فقط، وأخفِ المبالغ
     st.markdown("### 💵 المدفوعات (مقفولة)")
