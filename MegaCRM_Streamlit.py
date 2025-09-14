@@ -654,105 +654,71 @@ if role == "موظف" and employee:
 # 9) Payments (دوال + UI محمية بباسورد)
 # =========================
 
-# ===== حماية المدفوعات بكلمة سرّ (خاصة بكل موظّف) =====
-from datetime import datetime, timedelta
-import streamlit as st
-
+# --- حماية المدفوعات بالباسورد ---
 def _get_pay_password_for(user_login: str | None) -> str:
     """
-    يرجّع كلمة السرّ الخاصة بالموظف user_login من secrets.toml
-    التركيب المطلوب في secrets:
-    [payments_protect]
-    password = "1234"                       # اختيارية (افتراضي)
-    [payments_protect.by_user]
-    "Olfa Crm" = "olfa123"
-    "Ons Crm"  = "ons456"
-    ...
+    لو عندك secrets:
+      PAY_PASSWORD = "1234"                 # عامة
+      [PAY_PASSWORDS]                       # (اختياري) مخصصة لكل موظّف
+      "Olfa Crm" = "1111"
     """
     try:
-        sec = st.secrets["payments_protect"]
+        # أولوية: مخصصة لكل موظف
+        if user_login and "PAY_PASSWORDS" in st.secrets:
+            val = st.secrets["PAY_PASSWORDS"].get(user_login)
+            if val:
+                return str(val)
+        # عامة
+        val = st.secrets.get("PAY_PASSWORD", None)
+        if val:
+            return str(val)
     except Exception:
-        return "1234"
+        pass
+    return "1234"  # افتراضي
 
-    # per-user
-    if user_login and "by_user" in sec and user_login in sec["by_user"]:
-        return str(sec["by_user"][user_login])
-
-    # default
-    return str(sec.get("password", "1234"))
-
-
-def _lock_key_for(user_login: str) -> str:
-    return f"paylock_{user_login}"
-
-def payments_unlocked(user_login: str) -> bool:
-    """
-    القفل مربوط بكل موظف: نخزّنو حقلين في session_state:
-    - paylock_<user> : True/False
-    - paylock_<user>_at : timestamp وقت الفتح
-    """
-    key = _lock_key_for(user_login)
-    ok = st.session_state.get(key, False)
-    ts = st.session_state.get(f"{key}_at")
-    if not ok or ts is None:
-        return False
-    # صلاحية 15 دقيقة
-    if datetime.now() - ts <= timedelta(minutes=15):
+def payments_unlocked() -> bool:
+    ok = st.session_state.get("payments_ok", False)
+    ts = st.session_state.get("payments_ok_at")
+    if ok and ts and (datetime.now() - ts) <= timedelta(minutes=15):
         return True
-    # انتهت الصلاحية
-    st.session_state[key] = False
-    st.session_state[f"{key}_at"] = None
+    # انتهت المهلة
+    st.session_state["payments_ok"] = False
+    st.session_state["payments_ok_at"] = None
     return False
+def payments_lock_ui(user_login: str | None):
+    """UI بسيط لفتح/غلق المدفوعات بكلمة سرّ."""
 
+    # DEBUG: نوري اسم الموظف والـkeys من secrets.toml
+    try:
+        secrets = st.secrets["payments_protect"]
+        st.write("🔍 employee from UI:", user_login)
+        st.write("🔍 keys from secrets:", list(secrets.get("by_user", {}).keys()))
+    except Exception as e:
+        st.write("⚠️ Debug: ما فماش secrets أو structure غالط:", e)
 
-def reset_lock_on_employee_change(current_user: str):
-    """
-    إذا تبدّل الموظف من X إلى Y نلغي سريان الفتح القديم،
-    باش ما يلقى القسم مفتوح تلقائياً.
-    """
-    prev = st.session_state.get("_pay_prev_user")
-    if prev is None:
-        st.session_state["_pay_prev_user"] = current_user
-        return
-    if prev != current_user:
-        # نقفل القديم ونحدّث المتغيّر
-        prev_key = _lock_key_for(prev)
-        st.session_state[prev_key] = False
-        st.session_state[f"{prev_key}_at"] = None
-        st.session_state["_pay_prev_user"] = current_user
-
-
-def payments_lock_ui(user_login: str):
-    """واجهة القفل/الفتح للموظف الحالي فقط."""
-    reset_lock_on_employee_change(user_login)
-
-    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked(user_login)):
-        if payments_unlocked(user_login):
-            col1, col2 = st.columns([3,1])
+    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
+        if payments_unlocked():
+            col1, col2 = st.columns([1,1])
             with col1:
-                st.success(f"تم فتح قسم المدفوعات لـ {user_login} (ينتهي بعد 15 دقيقة).")
+                st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
             with col2:
                 if st.button("🔐 قفل الآن"):
-                    key = _lock_key_for(user_login)
-                    st.session_state[key] = False
-                    st.session_state[f"{key}_at"] = None
+                    st.session_state["payments_ok"] = False
+                    st.session_state["payments_ok_at"] = None
                     st.info("تم القفل.")
         else:
-            cfg = _get_pay_password_for(user_login)
-            pwd = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password", key=f"pwd_{user_login}")
+            pwd_cfg = _get_pay_password_for(user_login)
+            if not pwd_cfg:
+                st.warning("⚠️ لم يتم ضبط كلمة سرّ المدفوعات في secrets.toml")
+            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
             if st.button("🔓 فتح"):
-                if pwd == cfg:
-                    key = _lock_key_for(user_login)
-                    st.session_state[key] = True
-                    st.session_state[f"{key}_at"] = datetime.now()
+                if pwd_try and pwd_cfg and pwd_try == pwd_cfg:
+                    st.session_state["payments_ok"] = True
+                    st.session_state["payments_ok_at"] = datetime.now()
                     st.success("تم الفتح لمدة 15 دقيقة.")
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
 
-    # Debug اختيارية:
-    dprint("👤 employee =", user_login)
-    dprint("🔑 expected password =", _get_pay_password_for(user_login))
-    dprint("🔓 unlocked? =", payments_unlocked(user_login))
 # --- ورقة الدفوعات ---
 PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
 PAY_ALIASES = {
@@ -807,20 +773,64 @@ def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
 
-    df = df[PAY_HEADERS_STD]
+    # --- ورقة الدفوعات (نسخة منيعة) ---
+PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
 
+def ensure_payments_ws(sh, employee_name: str):
+    ws_name = f"{employee_name}_PAIEMENTS"
+    try:
+        ws = sh.worksheet(ws_name)
+    except Exception:
+        ws = sh.add_worksheet(title=ws_name, rows="2000", cols="10")
+        ws.update("1:1", [PAY_HEADERS_STD])
+        return ws
+
+    rows = ws.get_all_values()
+    # فرض العناوين القياسية دايمًا
+    if not rows:
+        ws.update("1:1", [PAY_HEADERS_STD])
+    else:
+        header = [h.strip() for h in rows[0]]
+        if header != PAY_HEADERS_STD:
+            ws.update("1:1", [PAY_HEADERS_STD])
+    return ws
+
+
+def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
+    """قراءة الدفوعات بشكل منيّع مهما كان شكل الصفوف."""
+    ws = ensure_payments_ws(sh, employee_name)
+    rows = ws.get_all_values()
+
+    # لا داتا
+    if not rows or len(rows) == 1:
+        return pd.DataFrame(columns=PAY_HEADERS_STD)
+
+    data = rows[1:]  # بدون الهيدر
+
+    # طبّع طول كل صف: لازم 6 أعمدة بالترتيب القياسي
+    normalized_rows = []
+    n = len(PAY_HEADERS_STD)
+    for r in data:
+        r = list(r) if r is not None else []
+        # كمّل بنصوص فارغة ثم قصّ للـ n
+        if len(r) < n:
+            r = r + [""] * (n - len(r))
+        else:
+            r = r[:n]
+        normalized_rows.append(r)
+
+    df = pd.DataFrame(normalized_rows, columns=PAY_HEADERS_STD)
+
+    # فلترة حسب الهاتف + تحويلات رقمية وتاريخ
     df["Tel"] = df["Tel"].apply(normalize_tn_phone)
     df = df[df["Tel"] == str(phone_norm)]
 
     if not df.empty:
-        df["Prix"] = df["Prix"].apply(_to_float)
-        df["Montant"] = df["Montant"].apply(_to_float)
-        df["Reste"] = df["Reste"].apply(_to_float)
-        try:
-            df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-        except Exception:
-            df["Date_dt"] = pd.NaT
-        df = df.sort_values(by=["Date_dt"], ascending=True).drop(columns=["Date_dt"], errors="ignore")
+        for c in ["Prix", "Montant", "Reste"]:
+            df[c] = df[c].apply(_to_float)
+        df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+        df = df.sort_values("Date_dt").drop(columns=["Date_dt"], errors="ignore")
+
     return df
 
 def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, prix_total: float, montant: float, dt: date):
