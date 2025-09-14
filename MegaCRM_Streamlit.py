@@ -1,122 +1,18 @@
-# MegaCRM_Streamlit_App.py — Dashboard + Search + Admin + Employee + Notes + Tags + Reassign + Payments
+# MegaCRM_Streamlit_App.py — Dashboard + Search + Admin + Employee + Notes + Tags + Reassign + Payments (with Password Lock)
 
 import json
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from PIL import Image
-# ===== حماية قسم المدفوعات (Password Lock) =====
-from datetime import timedelta
 
-def _get_pay_password_for(user_login: str | None) -> str:
-    """جيب كلمة السر من secrets (أولوية) وإلا رجّع الافتراضية."""
-    try:
-        # ينجم يكون عندك global أو per-employee
-        # مثال global:
-        pwd = st.secrets.get("PAY_PASSWORD", None)
-        if pwd:
-            return str(pwd)
-        # مثال per-employee: st.secrets["PAY_PASSWORDS"]["Olfa Crm"] = "1234"
-        if user_login and "PAY_PASSWORDS" in st.secrets:
-            return str(st.secrets["PAY_PASSWORDS"].get(user_login, "1234"))
-    except Exception:
-        pass
-    return "1234"  # default إذا ما لقا شيء
-
-def payments_unlocked() -> bool:
-    """يرجع True كان القسم مفتوح في الجلسة ولم تتعدَّ 15 دقيقة."""
-    ok = st.session_state.get("payments_ok", False)
-    at = st.session_state.get("payments_ok_at", None)
-    if not ok or at is None:
-        return False
-    try:
-        return (datetime.now() - at) < timedelta(minutes=15)
-    except Exception:
-        return False
-
-def payments_lock_ui(user_login: str | None):
-    """واجهة القفل/الفتح. وقت يكون مفتوح نعرض إشعار فقط، وقت يكون مسكّر نعرض expander بكلمة السر."""
-    if payments_unlocked():
-        st.success("✅ تم فتح المدفوعات (ينتهي بعد 15 دقيقة).")
-        if st.button("🔐 قفل الآن"):
-            st.session_state["payments_ok"] = False
-            st.session_state["payments_ok_at"] = None
-            st.info("تم القفل.")
-    else:
-        with st.expander("🔒 حماية المدفوعات (Password)", expanded=True):
-            pwd_cfg = _get_pay_password_for(user_login)
-            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
-            if st.button("🔓 فتح"):
-                if pwd_try == pwd_cfg:
-                    st.session_state["payments_ok"] = True
-                    st.session_state["payments_ok_at"] = datetime.now()
-                    st.success("تم الفتح لمدة 15 دقيقة.")
-                else:
-                    st.error("كلمة سرّ غير صحيحة")
-# ===== حماية قسم المدفوعات =====
-from datetime import timedelta
-
-def _get_pay_password_for(user_login: str | None) -> str:
-    """يرجّع كلمة سرّ للمدفوعات: لو عندك سرّ خاص لكل موظّف يفضّل، وإلا يرجّع العامة."""
-    try:
-        secrets = st.secrets["payments_protect"]
-    except Exception:
-        return ""  # لو ما عندكش secrets، يعتبرها فارغة
-    # خاص بالموظف لو موجود
-    if user_login and "by_user" in secrets and user_login in secrets["by_user"]:
-        return secrets["by_user"][user_login]
-    # وإلا العامة
-    return secrets.get("password", "")
-
-def payments_unlocked() -> bool:
-    """يتحقق إذا القسم مفتوح ومازال في المهلة الزمنية."""
-    ok = st.session_state.get("payments_ok", False)
-    ts = st.session_state.get("payments_ok_at")
-    if ok and ts:
-        # مهلة 15 دقيقة من وقت الفتح
-        if datetime.now() - ts <= timedelta(minutes=15):
-            return True
-        else:
-            # انتهت المهلة
-            st.session_state["payments_ok"] = False
-            st.session_state["payments_ok_at"] = None
-    return False
-
-def payments_lock_ui(user_login: str | None):
-    """UI بسيط لفتح/غلق المدفوعات بكلمة سرّ."""
-    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
-        if payments_unlocked():
-            col1, col2 = st.columns([1,1])
-            with col1:
-                st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
-            with col2:
-                if st.button("🔐 قفل الآن"):
-                    st.session_state["payments_ok"] = False
-                    st.session_state["payments_ok_at"] = None
-                    st.info("تم القفل.")
-        else:
-            pwd_cfg = _get_pay_password_for(user_login)
-            if not pwd_cfg:
-                st.warning("⚠️ لم يتم ضبط كلمة سرّ المدفوعات في secrets.toml (payments_protect.password).")
-            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
-            if st.button("🔓 فتح"):
-                if pwd_try and pwd_cfg and pwd_try == pwd_cfg:
-                    st.session_state["payments_ok"] = True
-                    st.session_state["payments_ok_at"] = datetime.now()
-                    st.success("تم الفتح لمدة 15 دقيقة.")
-                else:
-                    st.error("كلمة سرّ غير صحيحة.")
-
-def mask_amount(x):
-    """إخفاء المبالغ وقت القفل."""
-    s = str(x).strip()
-    return "•••" if s else ""
-# ========== Page config ==========
+# =========================
+# 0) إعدادات عامة
+# =========================
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
-# ===== عنوان في الوسط =====
 st.markdown(
     """
     <div style='text-align:center;'>
@@ -127,10 +23,10 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ===== Google Sheets Auth (Secrets أولاً ثم ملف محلي) =====
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 
 def make_client_and_sheet_id():
+    """توليد عميل Google + Sheet ID (من secrets وإلا من ملف محلي)."""
     try:
         sa = st.secrets["gcp_service_account"]
         if hasattr(sa, "keys"):
@@ -151,13 +47,20 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
+# تهيئة جلسة حماية المدفوعات
+if "payments_ok" not in st.session_state:
+    st.session_state["payments_ok"] = False
+    st.session_state["payments_ok_at"] = None
+
+# =========================
+# 1) ثوابت + Helpers
+# =========================
 EXPECTED_HEADERS = [
     "Nom & Prénom","Téléphone","Type de contact","Formation",
     "Remarque","Date ajout","Date de suivi","Alerte",
     "Inscription","Employe","Tag"
 ]
 
-# ===== Helpers =====
 def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
@@ -187,31 +90,28 @@ def find_row_by_phone(ws, phone_digits: str) -> int | None:
             return i
     return None
 
-# ===== Styling helpers =====
+# ستايل
 def color_tag(val):
-    # لون HEX في Tag
     if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
         return f"background-color: {val}; color: white;"
     return ""
 
 def mark_alert_cell(val: str):
-    """تلوين خلية التنبيه حسب الحالة"""
     s = str(val).strip()
     if not s:
         return ''
     if "متأخرة" in s:
-        # أصفر للمتأخر
-        return 'background-color: #ffe6b3; color: #7a4e00'
-    # أحمر لليوم أو أي نص تنبيه
-    return 'background-color: #ffcccc; color: #7a0000'
+        return 'background-color: #ffe6b3; color: #7a4e00'  # متأخرة = أصفر
+    return 'background-color: #ffcccc; color: #7a0000'     # تنبيه اليوم أو نص يدوي = أحمر
 
 def highlight_inscrit_row(row: pd.Series):
-    # تلوين الصف كامل بالأخضر إذا مسجّل
     insc = str(row.get("Inscription", "")).strip().lower()
     is_inscrit = insc in ("inscrit", "oui")
     return ['background-color: #d6f5e8' if is_inscrit else '' for _ in row.index]
 
-# ===== تحميل كل أوراق الموظفين =====
+# =========================
+# 2) تحميل الداتا من جميع أوراق الموظفين
+# =========================
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = client.open_by_key(SPREADSHEET_ID)
@@ -226,7 +126,6 @@ def load_all_data():
             ws.update("1:1", [EXPECTED_HEADERS])
             rows = ws.get_all_values()
 
-        # تأكيد الهيدر
         try:
             ws.update("1:1", [EXPECTED_HEADERS])
             rows = ws.get_all_values()
@@ -251,10 +150,12 @@ def load_all_data():
     return big, all_employes
 
 df_all, all_employes = load_all_data()
-df_emp = pd.DataFrame()   # حماية عامة
+df_emp = pd.DataFrame()
 filtered_df = pd.DataFrame()
 
-# ===== أعمدة مشتقّة + إعدادات =====
+# =========================
+# 3) أعمدة مشتقة + تنظيف تنبيهات/تواريخ
+# =========================
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
     df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
@@ -267,7 +168,6 @@ if not df_all.empty:
     due_today = dsv_date.eq(today).fillna(False)
     overdue = dsv_date.lt(today).fillna(False)
 
-    # عرض التنبيه
     df_all["Alerte_view"] = base_alert
     df_all.loc[base_alert.eq("") & overdue, "Alerte_view"] = "⚠️ متابعة متأخرة"
     df_all.loc[base_alert.eq("") & due_today, "Alerte_view"] = "⏰ متابعة اليوم"
@@ -275,7 +175,7 @@ if not df_all.empty:
     df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
     ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
 
-    # تنظيف المسجّلين: تفريغ متابعة/تنبيه
+    # تنظيف المسجّلين
     df_all["Inscription_norm"] = df_all["Inscription"].fillna("").astype(str).str.strip().str.lower()
     inscrit_mask = df_all["Inscription_norm"].isin(["oui", "inscrit"])
     df_all.loc[inscrit_mask, "Date de suivi"] = ""
@@ -286,66 +186,54 @@ else:
     df_all["Téléphone_norm"] = ""
     ALL_PHONES = set()
 
-# ===== الشعار في الـ sidebar (اختياري) =====
+# شعار في الـsidebar (اختياري)
 try:
     st.sidebar.image(Image.open("logo.png"), use_container_width=True)
 except Exception:
     pass
 
-# ===== اختيار الدور =====
+# =========================
+# 4) اختيار الدور + الموظف
+# =========================
 role = st.sidebar.selectbox("الدور", ["موظف", "أدمن"])
 employee = st.sidebar.selectbox("اختر اسمك", all_employes) if role == "موظف" else None
 
-# ================== Dashboard ==================
+# =========================
+# 5) Dashboard
+# =========================
 st.subheader("لوحة إحصائيات سريعة")
 
 df_dash = df_all.copy()
-
 if df_dash.empty:
     st.info("ما فماش داتا للعرض.")
 else:
-    # تأمين الأعمدة المشتقّة لو ناقصين (احتياط)
     df_dash["DateAjout_dt"] = pd.to_datetime(df_dash.get("Date ajout"), dayfirst=True, errors="coerce")
     df_dash["DateSuivi_dt"] = pd.to_datetime(df_dash.get("Date de suivi"), dayfirst=True, errors="coerce")
 
     today = datetime.now().date()
-
-    # تطبيع التسجيل والتنبيه
     df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
-    df_dash["Alerte_norm"]      = df_dash["Alerte_view"].fillna("").astype(str).str.strip()
+    df_dash["Alerte_norm"] = df_dash["Alerte_view"].fillna("").astype(str).str.strip()
 
-    # 🆕 المضافون اليوم
+    # أرقام اليوم
     added_today_mask = df_dash["DateAjout_dt"].dt.date.eq(today)
-
-    # ✅ المسجّلون اليوم (Inscription=Oui/Inscrit و Date ajout = اليوم)
     registered_today_mask = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
-
-    # 🚨 التنبيهات الحالية (فقط اعتمادًا على Alerte_view)
     alert_now_mask = df_dash["Alerte_norm"].ne("")
 
-    # أرقام عامة
-    total_clients    = int(len(df_dash))
-    added_today      = int(added_today_mask.sum())
+    total_clients = int(len(df_dash))
+    added_today = int(added_today_mask.sum())
     registered_today = int(registered_today_mask.sum())
-    alerts_now       = int(alert_now_mask.sum())
-
+    alerts_now = int(alert_now_mask.sum())
     registered_total = int((df_dash["Inscription_norm"] == "oui").sum())
     rate = round((registered_total / total_clients) * 100, 2) if total_clients else 0.0
 
-    # كروت
     c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.metric("👥 إجمالي العملاء", f"{total_clients}")
-    with c2:
-        st.metric("🆕 المضافون اليوم", f"{added_today}")
-    with c3:
-        st.metric("✅ المسجّلون اليوم", f"{registered_today}")
-    with c4:
-        st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
-    with c5:
-        st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+    with c1: st.metric("👥 إجمالي العملاء", f"{total_clients}")
+    with c2: st.metric("🆕 المضافون اليوم", f"{added_today}")
+    with c3: st.metric("✅ المسجّلون اليوم", f"{registered_today}")
+    with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
+    with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
-    # -------- تجميع حسب الموظّف --------
+    # حسب الموظف
     df_dash["__added_today"] = added_today_mask
     df_dash["__reg_today"]   = registered_today_mask
     df_dash["__has_alert"]   = alert_now_mask
@@ -353,24 +241,22 @@ else:
     grp_base = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
-            Clients   = ("Nom & Prénom", "count"),
-            Inscrits  = ("Inscription_norm", lambda x: (x == "oui").sum()),
-            تنبيهات     = ("__has_alert", "sum"),
+            Clients=("Nom & Prénom", "count"),
+            Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
+            تنبيهات=("__has_alert", "sum"),
         )
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
-
     today_by_emp = (
         df_dash.groupby("__sheet_name", dropna=False)
         .agg(
-            مضافون_اليوم   = ("__added_today", "sum"),
-            مسجلون_اليوم   = ("__reg_today", "sum"),
+            مضافون_اليوم=("__added_today", "sum"),
+            مسجلون_اليوم=("__reg_today", "sum"),
         )
         .reset_index()
         .rename(columns={"__sheet_name": "الموظف"})
     )
-
     grp = grp_base.merge(today_by_emp, on="الموظف", how="left")
     grp["% تسجيل"] = ((grp["Inscrits"] / grp["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
     grp = grp.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
@@ -378,7 +264,9 @@ else:
     st.markdown("#### حسب الموظّف")
     st.dataframe(grp, use_container_width=True)
 
-# ================== 🔎 بحث عام برقم الهاتف ==================
+# =========================
+# 6) بحث عام بالهاتف
+# =========================
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
 
@@ -406,11 +294,13 @@ if global_phone.strip():
         st.dataframe(styled_global, use_container_width=True)
         st.markdown("---")
 
-# ================== لوحة الأدمــن ==================
+# =========================
+# 7) لوحة الأدمــن
+# =========================
 if role == "أدمن":
     st.subheader("👨‍💼 إدارة الموظفين")
-   
-    # ➕ إضافة موظف
+
+    # إضافة موظف
     st.markdown("### ➕ إضافة موظف")
     new_emp = st.text_input("اسم الموظف الجديد")
     if st.button("إنشاء ورقة جديدة"):
@@ -426,7 +316,7 @@ if role == "أدمن":
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
-    # ➕ إضافة عميل لأي موظف
+    # إضافة عميل لأي موظف
     st.markdown("### ➕ إضافة عميل جديد (من الأدمن)")
     with st.form("admin_add_client_form"):
         col1, col2 = st.columns(2)
@@ -462,7 +352,7 @@ if role == "أدمن":
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-    # ===== 🔁 نقل عميل بين الموظفين =====
+    # نقل عميل
     st.markdown("### 🔁 نقل عميل بين الموظفين")
     colRA, colRB = st.columns(2)
     with colRA:
@@ -503,18 +393,19 @@ if role == "أدمن":
             except Exception as e:
                 st.error(f"❌ خطأ أثناء النقل: {e}")
 
-    # 🗑️ حذف موظف (تنبيه)
     st.markdown("### 🗑️ حذف موظف")
     emp_to_delete = st.selectbox("اختر موظفًا للحذف", all_employes, key="delete_emp")
     if st.button("❗ احذف هذا الموظف"):
         st.warning("⚠️ لا يمكن الحذف مباشرة عبر Streamlit لأسباب أمنية. احذف يدويًا من Google Sheets.")
 
-# ================== واجهة الموظّف ==================
+# =========================
+# 8) واجهة الموظّف: عرض + ملاحظات + Tag + إضافة عميل
+# =========================
 if role == "موظف" and employee:
     st.subheader(f"📁 لوحة {employee}")
     df_emp = df_all[df_all["__sheet_name"] == employee].copy()
 
-    # ===== فلترة بالشهر =====
+    # فلترة بالشهر
     if not df_emp.empty:
         df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
         df_emp = df_emp.dropna(subset=["DateAjout_dt"])
@@ -525,20 +416,19 @@ if role == "موظف" and employee:
         st.warning("⚠️ لا يوجد أي عملاء بعد. قاعدة البيانات فارغة.")
         filtered_df = pd.DataFrame()
 
-    # ===== عدّاد: المضافين بلا ملاحظات =====
+    # عدّاد مضافين بلا ملاحظات
     if not filtered_df.empty:
         pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
         pending_no_notes = int(pending_mask.sum())
         st.markdown("### 📊 متابعتك")
         st.metric("⏳ مضافين بلا ملاحظات", pending_no_notes)
 
-        # فلترة بالتكوين
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-    # ===== عرض العملاء =====
+    # عرض جدول
     def render_table(df_disp: pd.DataFrame):
         if df_disp.empty:
             st.info("لا توجد بيانات في هذا الفلتر.")
@@ -558,7 +448,6 @@ if role == "موظف" and employee:
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
-    # ===== عملاء لديهم تنبيهات =====
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
         _df = filtered_df.copy()
         if "Alerte_view" in _df.columns:
@@ -567,13 +456,12 @@ if role == "موظف" and employee:
         st.markdown("### 🚨 عملاء مع تنبيهات")
         render_table(alerts_df)
 
-    # ===== ✏️ تعديل بيانات عميل (اسم/هاتف/تكوين/تواريخ/تسجيل/ملاحظة) =====
+    # تعديل بيانات عميل
     if not df_emp.empty:
         st.markdown("### ✏️ تعديل بيانات عميل")
         df_emp_edit = df_emp.copy()
         df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
 
-        # ✅ إضافة الـindex في نص الاختيار لتسهيل البحث
         phone_choices = {
             f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
             for i, row in df_emp_edit.iterrows()
@@ -604,9 +492,7 @@ if role == "موظف" and employee:
                 new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key="edit_suivi_dt")
                 new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key="edit_insc_sel")
 
-            # ملاحظة كاملة (استبدال)
             new_remark_full = st.text_area("🗒️ ملاحظة (سيتم استبدال المحتوى الحالي بهذا النص)", value=cur_remark, key="edit_remark_txt")
-            # ملاحظة إضافية بطابع زمني (إلحاق)
             extra_note = st.text_area("➕ أضف ملاحظة جديدة (سوف تُضاف مع الطابع الزمني)", placeholder="اكتب ملاحظة لإلحاقها…", key="append_note_txt")
 
             if st.button("💾 حفظ التعديلات", key="save_all_edits"):
@@ -623,16 +509,13 @@ if role == "موظف" and employee:
 
                         new_phone_norm = normalize_tn_phone(new_phone_raw)
                         if not new_name.strip():
-                            st.error("❌ الاسم و اللقب إجباري.")
-                            st.stop()
+                            st.error("❌ الاسم و اللقب إجباري."); st.stop()
                         if not new_phone_norm.strip():
-                            st.error("❌ رقم الهاتف إجباري.")
-                            st.stop()
+                            st.error("❌ رقم الهاتف إجباري."); st.stop()
 
                         phones_except_current = set(ALL_PHONES) - {chosen_phone}
                         if new_phone_norm in phones_except_current:
-                            st.error("⚠️ الرقم موجود مسبقًا في النظام. رجاءً اختر رقمًا آخر.")
-                            st.stop()
+                            st.error("⚠️ الرقم موجود مسبقًا في النظام."); st.stop()
 
                         ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                         ws.update_cell(row_idx, col_map["Téléphone"], new_phone_norm)
@@ -641,11 +524,9 @@ if role == "موظف" and employee:
                         ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
                         ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
 
-                        # استبدال الملاحظة كاملة إذا تغيّرت
                         if new_remark_full.strip() != cur_remark.strip():
                             ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
 
-                        # إلحاق ملاحظة جديدة بطابع زمني
                         if extra_note.strip():
                             old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
                             stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -657,7 +538,7 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-    # ===== 📝 ملاحظات (إضافة سريعة بطابع زمني) =====
+    # ملاحظات سريعة
     if not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة (سريعة)")
         scope_df = filtered_df if not filtered_df.empty else df_emp
@@ -690,7 +571,7 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء حفظ الملاحظة: {e}")
 
-    # ===== 🎨 Tag =====
+    # Tag
     if not df_emp.empty:
         st.markdown("### 🎨 اختر لون/Tag للعميل")
         scope_df = filtered_df if not filtered_df.empty else df_emp
@@ -717,7 +598,7 @@ if role == "موظف" and employee:
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الحفظ: {e}")
 
-    # ===== ➕ إضافة عميل (الموظف) =====
+    # إضافة عميل (الموظف)
     st.markdown("### ➕ أضف عميل جديد")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
@@ -752,7 +633,7 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-    # ===== WhatsApp زرّ مباشر =====
+    # واتساب
     if not df_emp.empty:
         st.markdown("### 📲 تواصل عبر واتساب")
         df_emp_w = df_emp.copy()
@@ -769,11 +650,66 @@ if role == "موظف" and employee:
         wa_url = f"https://wa.me/{tel_norm}?text={quote(msg)}"
         st.link_button("📤 فتح واتساب", wa_url)
 
-# ====== Payments (ensure + read + add) ======
+# =========================
+# 9) Payments (دوال + UI محمية بباسورد)
+# =========================
 
+# --- حماية المدفوعات بالباسورد ---
+def _get_pay_password_for(user_login: str | None) -> str:
+    """
+    لو عندك secrets:
+      PAY_PASSWORD = "1234"                 # عامة
+      [PAY_PASSWORDS]                       # (اختياري) مخصصة لكل موظّف
+      "Olfa Crm" = "1111"
+    """
+    try:
+        # أولوية: مخصصة لكل موظف
+        if user_login and "PAY_PASSWORDS" in st.secrets:
+            val = st.secrets["PAY_PASSWORDS"].get(user_login)
+            if val:
+                return str(val)
+        # عامة
+        val = st.secrets.get("PAY_PASSWORD", None)
+        if val:
+            return str(val)
+    except Exception:
+        pass
+    return "1234"  # افتراضي
+
+def payments_unlocked() -> bool:
+    ok = st.session_state.get("payments_ok", False)
+    ts = st.session_state.get("payments_ok_at")
+    if ok and ts and (datetime.now() - ts) <= timedelta(minutes=15):
+        return True
+    # انتهت المهلة
+    st.session_state["payments_ok"] = False
+    st.session_state["payments_ok_at"] = None
+    return False
+
+def payments_lock_ui(user_login: str | None):
+    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
+        if payments_unlocked():
+            col1, col2 = st.columns([1,1])
+            with col1:
+                st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
+            with col2:
+                if st.button("🔐 قفل الآن"):
+                    st.session_state["payments_ok"] = False
+                    st.session_state["payments_ok_at"] = None
+                    st.info("تم القفل.")
+        else:
+            pwd_cfg = _get_pay_password_for(user_login)
+            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
+            if st.button("🔓 فتح"):
+                if pwd_try and pwd_try == pwd_cfg:
+                    st.session_state["payments_ok"] = True
+                    st.session_state["payments_ok_at"] = datetime.now()
+                    st.success("تم الفتح لمدة 15 دقيقة.")
+                else:
+                    st.error("كلمة سرّ غير صحيحة.")
+
+# --- ورقة الدفوعات ---
 PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
-
-# بدائل أسماء الأعمدة المقبولة
 PAY_ALIASES = {
     "tel": "Tel", "téléphone": "Tel", "telephone": "Tel", "num": "Tel",
     "formation": "Formation",
@@ -796,7 +732,6 @@ def _to_float(x):
         return 0.0
 
 def ensure_payments_ws(sh, employee_name: str):
-    """يرجّع Worksheet متاع الدفوعات للموظف ويضمن الهيدر القياسي موجود."""
     ws_name = f"{employee_name}_PAIEMENTS"
     try:
         ws = sh.worksheet(ws_name)
@@ -814,55 +749,20 @@ def ensure_payments_ws(sh, employee_name: str):
             ws.update("1:1", [PAY_HEADERS_STD])
     return ws
 
-def _map_to_std_header(raw_header):
-    mapped = []
-    for h in raw_header:
-        key = str(h).strip().lower()
-        std = PAY_ALIASES.get(key)
-        if std is None and key in PAY_HEADERS_STD:
-            std = key
-        mapped.append(std if std in PAY_HEADERS_STD else None)
-    final = []
-    for std in PAY_HEADERS_STD:
-        final.append(std)
-    return final
-
 def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
-    """يرجّع DataFrame دفوعات للعميل (حسب الهاتف المطبّع) من ورقة الموظّف."""
     ws = ensure_payments_ws(sh, employee_name)
     rows = ws.get_all_values()
     if not rows or len(rows) == 1:
         return pd.DataFrame(columns=PAY_HEADERS_STD)
 
-    raw_header = rows[0]
     data = rows[1:]
+    df = pd.DataFrame(data, columns=PAY_HEADERS_STD[:len(rows[0])])
+    # إكمال الأعمدة الناقصة
+    for col in PAY_HEADERS_STD:
+        if col not in df.columns:
+            df[col] = ""
 
-    lower_set = {h.strip().lower() for h in raw_header}
-    if set(h.lower() for h in PAY_HEADERS_STD).issubset(lower_set) and len(raw_header) >= len(PAY_HEADERS_STD):
-        header = PAY_HEADERS_STD
-        data_rows = [r[:len(PAY_HEADERS_STD)] + [""] * (len(PAY_HEADERS_STD) - len(r[:len(PAY_HEADERS_STD)])) for r in data]
-    else:
-        mapped = _map_to_std_header(raw_header)
-        idx_map = {}
-        for i, h in enumerate(raw_header):
-            key = str(h).strip().lower()
-            std = PAY_ALIASES.get(key)
-            if std is None and key in [x.lower() for x in PAY_HEADERS_STD]:
-                std = h.strip()
-            if std in PAY_HEADERS_STD:
-                idx_map[std] = i
-        data_rows = []
-        for r in data:
-            row_obj = {}
-            for std in PAY_HEADERS_STD:
-                if std in idx_map and idx_map[std] < len(r):
-                    row_obj[std] = r[idx_map[std]]
-                else:
-                    row_obj[std] = ""
-            data_rows.append([row_obj[c] for c in PAY_HEADERS_STD])
-        header = PAY_HEADERS_STD
-
-    df = pd.DataFrame(data_rows, columns=header)
+    df = df[PAY_HEADERS_STD]
 
     df["Tel"] = df["Tel"].apply(normalize_tn_phone)
     df = df[df["Tel"] == str(phone_norm)]
@@ -879,7 +779,6 @@ def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
     return df
 
 def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, prix_total: float, montant: float, dt: date):
-    """يضيف سطر دفع جديد ويحسب المتبقي = Prix - sum(Montant)."""
     ws = ensure_payments_ws(sh, employee_name)
     existing = _read_payments_for(sh, phone_norm, employee_name)
     sum_old = float(existing["Montant"].sum()) if not existing.empty else 0.0
@@ -896,110 +795,59 @@ def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, pri
     ws.append_row(row)
     return reste
 
-# ===== 💳 الدفوعات (سعر التكوين/المدفوع/المتبقي) =====
+# --- واجهة المدفوعات (محميّة) ---
 if role == "موظف" and employee:
-    st.markdown("### 💳 الدفوعات")
+    st.markdown("## 💳 الدفوعات")
 
-    df_emp_for_pay = df_all[df_all["__sheet_name"] == employee].copy()
-    df_emp_for_pay["Téléphone_norm"] = df_emp_for_pay["Téléphone"].apply(normalize_tn_phone)
-    pay_choices = {
-        f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
-        for _, row in df_emp_for_pay.iterrows() if str(row["Téléphone"]).strip() != ""
-    }
-
-    if not pay_choices:
-        st.info("لا يوجد عملاء لاختيارهم للدفوعات.")
-    else:
-        pay_key = st.selectbox("اختر العميل (للـدفوعات)", list(pay_choices.keys()), key="pay_pick")
-        pay_phone = pay_choices.get(pay_key, "")
-        cur_row = df_emp_for_pay[df_emp_for_pay["Téléphone_norm"] == pay_phone].iloc[0]
-        cur_formation = str(cur_row.get("Formation", ""))
-
-        sh = client.open_by_key(SPREADSHEET_ID)
-
-        # عرض التاريخ الحالي
-        df_payments = _read_payments_for(sh, pay_phone, employee)
-        if df_payments.empty:
-            st.info("لا توجد دفوعات سابقة لهذا العميل.")
-        else:
-            st.dataframe(df_payments, use_container_width=True)
-
-        # فورم إضافة دفعة
-        with st.form("pay_add_form"):
-            colp1, colp2, colp3 = st.columns(3)
-            with colp1:
-                prix_total = st.number_input("💰 سعر التكوين (Prix)", min_value=0.0, step=10.0, value=float(df_payments["Prix"].max()) if not df_payments.empty else 0.0)
-            with colp2:
-                montant = st.number_input("💵 المبلغ المدفوع (Montant)", min_value=0.0, step=10.0)
-            with colp3:
-                date_pay = st.date_input("📅 تاريخ الدفع", value=date.today())
-
-            submitted_pay = st.form_submit_button("➕ أضف الدفعة")
-            if submitted_pay:
-                if prix_total <= 0 or montant <= 0:
-                    st.warning("رجاءً أدخل قيم موجبة لسعر التكوين والمبلغ المدفوع.")
-                else:
-                    try:
-                        reste = _append_payment(sh, employee, pay_phone, cur_formation, prix_total, montant, date_pay)
-                        st.success(f"✅ تمت الإضافة. المتبقي الآن: {reste:.2f}")
-                        st.cache_data.clear()
-                    except Exception as e:
-                        st.error(f"❌ خطأ أثناء إضافة الدفعة: {e}")
-# ==== قبل قسم المدفوعات مباشرة ====
-# نفترض عندك المتغيّر employee فيه اسم الموظّف الحالي (أو current_user_login إن كنت عامل نظام login)
-current_user_login = employee  # بدّلها لو عندك نظام مستخدمين مختلف
-
-payments_lock_ui(current_user_login)
-
-# ==== قسم المدفوعات ====
-if payments_unlocked():
-    # ✅ مفتوح: اعرض كل شي عادي وخلي المستخدم يضيف/يعدّل الدفعات
-    st.markdown("### 💵 المدفوعات")
-    # ... (هنا يجي الكود الموجود متاع الإضافة/العرض/الحساب)
-# ===== 💵 المدفوعات للعميل المختار =====
-if role == "موظف" and employee and 'chosen_phone' in locals() and chosen_phone:
-    st.markdown("## 💵 المدفوعات")
-
-    # 1) واجهة القفل/الفتح
+    # واجهة القفل/الفتح
     payments_lock_ui(employee)
 
-    # 2) إذا الجلسة مفتوحة، نعرض كل الواجهة. غير ذلك: ما نعرض شيء
     if payments_unlocked():
-        # --- اكتب هنا كل واجهة الدفع اللي عندك: السعر، المبلغ المدفوع، التاريخ، زر "أضف الدفعة"،
-        # --- ثم جدول المدفوعات + المجاميع (المدفوع، الباقي) ... الخ
-        # مثال مختصر:
+        df_emp_for_pay = df_all[df_all["__sheet_name"] == employee].copy()
+        df_emp_for_pay["Téléphone_norm"] = df_emp_for_pay["Téléphone"].apply(normalize_tn_phone)
+        pay_choices = {
+            f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+            for _, row in df_emp_for_pay.iterrows() if str(row["Téléphone"]).strip() != ""
+        }
 
-        prix = st.number_input("💰 سعر التكوين (Prix)", min_value=0.0, step=10.0, key="pay_prix")
-        mnt = st.number_input("🟩 المبلغ المدفوع (Montant)", min_value=0.0, step=5.0, key="pay_montant")
-        dte = st.date_input("📅 تاريخ الدفع", value=date.today(), key="pay_date")
+        if not pay_choices:
+            st.info("لا يوجد عملاء لاختيارهم للدفوعات.")
+        else:
+            pay_key = st.selectbox("اختر العميل (للـدفوعات)", list(pay_choices.keys()), key="pay_pick")
+            pay_phone = pay_choices.get(pay_key, "")
+            cur_row = df_emp_for_pay[df_emp_for_pay["Téléphone_norm"] == pay_phone].iloc[0]
+            cur_formation = str(cur_row.get("Formation", ""))
 
-        if st.button("➕ أضف الدفعة"):
-            # نادِي دالة الحفظ متاعك (append_row في ورقة Payments-<Employee> مثلاً)
-            # save_payment(...)
+            sh = client.open_by_key(SPREADSHEET_ID)
+            df_payments = _read_payments_for(sh, pay_phone, employee)
+            if df_payments.empty:
+                st.info("لا توجد دفوعات سابقة لهذا العميل.")
+            else:
+                st.dataframe(df_payments, use_container_width=True)
 
-            st.success("تمت إضافة الدفعة.")
-            st.cache_data.clear()
+            with st.form("pay_add_form"):
+                colp1, colp2, colp3 = st.columns(3)
+                with colp1:
+                    prix_total = st.number_input(
+                        "💰 سعر التكوين (Prix)",
+                        min_value=0.0, step=10.0,
+                        value=float(df_payments["Prix"].max()) if not df_payments.empty else 0.0
+                    )
+                with colp2:
+                    montant = st.number_input("💵 المبلغ المدفوع (Montant)", min_value=0.0, step=10.0)
+                with colp3:
+                    date_pay = st.date_input("📅 تاريخ الدفع", value=date.today())
 
-        # بعد الحفظ اعرض جدول المدفوعات + الحسابات
-        # df_payments = _read_payments_for(...)
-        # st.dataframe(df_payments, use_container_width=True)
-
+                submitted_pay = st.form_submit_button("➕ أضف الدفعة")
+                if submitted_pay:
+                    if prix_total <= 0 or montant <= 0:
+                        st.warning("رجاءً أدخل قيم موجبة لسعر التكوين والمبلغ المدفوع.")
+                    else:
+                        try:
+                            reste = _append_payment(sh, employee, pay_phone, cur_formation, prix_total, montant, date_pay)
+                            st.success(f"✅ تمت الإضافة. المتبقي الآن: {reste:.2f}")
+                            st.cache_data.clear()
+                        except Exception as e:
+                            st.error(f"❌ خطأ أثناء إضافة الدفعة: {e}")
     else:
-        st.info("🔒 قسم المدفوعات مقفول. أدخل كلمة السرّ لفتحه من الأعلى.")
-else:
-    # 🔐 مقفول: اسمح بعرض أسماء العملاء فقط، وأخفِ المبالغ
-    st.markdown("### 💵 المدفوعات (مقفولة)")
-    st.info("القسم مقفول. أدخل كلمة السرّ أعلاه لفتح التفاصيل.")
-    # لو تحب تظهر جدول العملاء بدون مبالغ:
-    try:
-        # df_payments_all: DataFrame فيه دفعات (لو موجود عندك). وإلا تجاهل الجزئية هاذي.
-        df_preview = df_payments_all.copy()
-        for col in ["Prix formation", "Montant", "Reste"]:
-            if col in df_preview.columns:
-                df_preview[col] = df_preview[col].apply(mask_amount)
-        st.dataframe(df_preview, use_container_width=True)
-    except Exception:
-        pass
-if not payments_unlocked():
-    st.stop()  # يوقف تنفيذ باقي القسم
-# ثم بقية كود المدفوعات
+        st.info("🔒 قسم المدفوعات مقفول. أدخل كلمة السرّ أعلاه لفتح التفاصيل.")
