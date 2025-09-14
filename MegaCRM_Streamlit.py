@@ -685,8 +685,17 @@ def payments_unlocked() -> bool:
     st.session_state["payments_ok"] = False
     st.session_state["payments_ok_at"] = None
     return False
-
 def payments_lock_ui(user_login: str | None):
+    """UI بسيط لفتح/غلق المدفوعات بكلمة سرّ."""
+
+    # DEBUG: نوري اسم الموظف والـkeys من secrets.toml
+    try:
+        secrets = st.secrets["payments_protect"]
+        st.write("🔍 employee from UI:", user_login)
+        st.write("🔍 keys from secrets:", list(secrets.get("by_user", {}).keys()))
+    except Exception as e:
+        st.write("⚠️ Debug: ما فماش secrets أو structure غالط:", e)
+
     with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
         if payments_unlocked():
             col1, col2 = st.columns([1,1])
@@ -699,9 +708,11 @@ def payments_lock_ui(user_login: str | None):
                     st.info("تم القفل.")
         else:
             pwd_cfg = _get_pay_password_for(user_login)
+            if not pwd_cfg:
+                st.warning("⚠️ لم يتم ضبط كلمة سرّ المدفوعات في secrets.toml")
             pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
             if st.button("🔓 فتح"):
-                if pwd_try and pwd_try == pwd_cfg:
+                if pwd_try and pwd_cfg and pwd_try == pwd_cfg:
                     st.session_state["payments_ok"] = True
                     st.session_state["payments_ok_at"] = datetime.now()
                     st.success("تم الفتح لمدة 15 دقيقة.")
