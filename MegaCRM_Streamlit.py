@@ -762,20 +762,64 @@ def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
         if col not in df.columns:
             df[col] = ""
 
-    df = df[PAY_HEADERS_STD]
+    # --- ورقة الدفوعات (نسخة منيعة) ---
+PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
 
+def ensure_payments_ws(sh, employee_name: str):
+    ws_name = f"{employee_name}_PAIEMENTS"
+    try:
+        ws = sh.worksheet(ws_name)
+    except Exception:
+        ws = sh.add_worksheet(title=ws_name, rows="2000", cols="10")
+        ws.update("1:1", [PAY_HEADERS_STD])
+        return ws
+
+    rows = ws.get_all_values()
+    # فرض العناوين القياسية دايمًا
+    if not rows:
+        ws.update("1:1", [PAY_HEADERS_STD])
+    else:
+        header = [h.strip() for h in rows[0]]
+        if header != PAY_HEADERS_STD:
+            ws.update("1:1", [PAY_HEADERS_STD])
+    return ws
+
+
+def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
+    """قراءة الدفوعات بشكل منيّع مهما كان شكل الصفوف."""
+    ws = ensure_payments_ws(sh, employee_name)
+    rows = ws.get_all_values()
+
+    # لا داتا
+    if not rows or len(rows) == 1:
+        return pd.DataFrame(columns=PAY_HEADERS_STD)
+
+    data = rows[1:]  # بدون الهيدر
+
+    # طبّع طول كل صف: لازم 6 أعمدة بالترتيب القياسي
+    normalized_rows = []
+    n = len(PAY_HEADERS_STD)
+    for r in data:
+        r = list(r) if r is not None else []
+        # كمّل بنصوص فارغة ثم قصّ للـ n
+        if len(r) < n:
+            r = r + [""] * (n - len(r))
+        else:
+            r = r[:n]
+        normalized_rows.append(r)
+
+    df = pd.DataFrame(normalized_rows, columns=PAY_HEADERS_STD)
+
+    # فلترة حسب الهاتف + تحويلات رقمية وتاريخ
     df["Tel"] = df["Tel"].apply(normalize_tn_phone)
     df = df[df["Tel"] == str(phone_norm)]
 
     if not df.empty:
-        df["Prix"] = df["Prix"].apply(_to_float)
-        df["Montant"] = df["Montant"].apply(_to_float)
-        df["Reste"] = df["Reste"].apply(_to_float)
-        try:
-            df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-        except Exception:
-            df["Date_dt"] = pd.NaT
-        df = df.sort_values(by=["Date_dt"], ascending=True).drop(columns=["Date_dt"], errors="ignore")
+        for c in ["Prix", "Montant", "Reste"]:
+            df[c] = df[c].apply(_to_float)
+        df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+        df = df.sort_values("Date_dt").drop(columns=["Date_dt"], errors="ignore")
+
     return df
 
 def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, prix_total: float, montant: float, dt: date):
