@@ -654,60 +654,105 @@ if role == "موظف" and employee:
 # 9) Payments (دوال + UI محمية بباسورد)
 # =========================
 
-# --- حماية المدفوعات بالباسورد ---
+# ===== حماية المدفوعات بكلمة سرّ (خاصة بكل موظّف) =====
+from datetime import datetime, timedelta
+import streamlit as st
+
 def _get_pay_password_for(user_login: str | None) -> str:
     """
-    لو عندك secrets:
-      PAY_PASSWORD = "1234"                 # عامة
-      [PAY_PASSWORDS]                       # (اختياري) مخصصة لكل موظّف
-      "Olfa Crm" = "1111"
+    يرجّع كلمة السرّ الخاصة بالموظف user_login من secrets.toml
+    التركيب المطلوب في secrets:
+    [payments_protect]
+    password = "1234"                       # اختيارية (افتراضي)
+    [payments_protect.by_user]
+    "Olfa Crm" = "olfa123"
+    "Ons Crm"  = "ons456"
+    ...
     """
     try:
-        # أولوية: مخصصة لكل موظف
-        if user_login and "PAY_PASSWORDS" in st.secrets:
-            val = st.secrets["PAY_PASSWORDS"].get(user_login)
-            if val:
-                return str(val)
-        # عامة
-        val = st.secrets.get("PAY_PASSWORD", None)
-        if val:
-            return str(val)
+        sec = st.secrets["payments_protect"]
     except Exception:
-        pass
-    return "1234"  # افتراضي
+        return "1234"
 
-def payments_unlocked() -> bool:
-    ok = st.session_state.get("payments_ok", False)
-    ts = st.session_state.get("payments_ok_at")
-    if ok and ts and (datetime.now() - ts) <= timedelta(minutes=15):
+    # per-user
+    if user_login and "by_user" in sec and user_login in sec["by_user"]:
+        return str(sec["by_user"][user_login])
+
+    # default
+    return str(sec.get("password", "1234"))
+
+
+def _lock_key_for(user_login: str) -> str:
+    return f"paylock_{user_login}"
+
+def payments_unlocked(user_login: str) -> bool:
+    """
+    القفل مربوط بكل موظف: نخزّنو حقلين في session_state:
+    - paylock_<user> : True/False
+    - paylock_<user>_at : timestamp وقت الفتح
+    """
+    key = _lock_key_for(user_login)
+    ok = st.session_state.get(key, False)
+    ts = st.session_state.get(f"{key}_at")
+    if not ok or ts is None:
+        return False
+    # صلاحية 15 دقيقة
+    if datetime.now() - ts <= timedelta(minutes=15):
         return True
-    # انتهت المهلة
-    st.session_state["payments_ok"] = False
-    st.session_state["payments_ok_at"] = None
+    # انتهت الصلاحية
+    st.session_state[key] = False
+    st.session_state[f"{key}_at"] = None
     return False
 
-def payments_lock_ui(user_login: str | None):
-    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked()):
-        if payments_unlocked():
-            col1, col2 = st.columns([1,1])
+
+def reset_lock_on_employee_change(current_user: str):
+    """
+    إذا تبدّل الموظف من X إلى Y نلغي سريان الفتح القديم،
+    باش ما يلقى القسم مفتوح تلقائياً.
+    """
+    prev = st.session_state.get("_pay_prev_user")
+    if prev is None:
+        st.session_state["_pay_prev_user"] = current_user
+        return
+    if prev != current_user:
+        # نقفل القديم ونحدّث المتغيّر
+        prev_key = _lock_key_for(prev)
+        st.session_state[prev_key] = False
+        st.session_state[f"{prev_key}_at"] = None
+        st.session_state["_pay_prev_user"] = current_user
+
+
+def payments_lock_ui(user_login: str):
+    """واجهة القفل/الفتح للموظف الحالي فقط."""
+    reset_lock_on_employee_change(user_login)
+
+    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked(user_login)):
+        if payments_unlocked(user_login):
+            col1, col2 = st.columns([3,1])
             with col1:
-                st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
+                st.success(f"تم فتح قسم المدفوعات لـ {user_login} (ينتهي بعد 15 دقيقة).")
             with col2:
                 if st.button("🔐 قفل الآن"):
-                    st.session_state["payments_ok"] = False
-                    st.session_state["payments_ok_at"] = None
+                    key = _lock_key_for(user_login)
+                    st.session_state[key] = False
+                    st.session_state[f"{key}_at"] = None
                     st.info("تم القفل.")
         else:
-            pwd_cfg = _get_pay_password_for(user_login)
-            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password")
+            cfg = _get_pay_password_for(user_login)
+            pwd = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password", key=f"pwd_{user_login}")
             if st.button("🔓 فتح"):
-                if pwd_try and pwd_try == pwd_cfg:
-                    st.session_state["payments_ok"] = True
-                    st.session_state["payments_ok_at"] = datetime.now()
+                if pwd == cfg:
+                    key = _lock_key_for(user_login)
+                    st.session_state[key] = True
+                    st.session_state[f"{key}_at"] = datetime.now()
                     st.success("تم الفتح لمدة 15 دقيقة.")
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
 
+    # Debug اختيارية:
+    dprint("👤 employee =", user_login)
+    dprint("🔑 expected password =", _get_pay_password_for(user_login))
+    dprint("🔓 unlocked? =", payments_unlocked(user_login))
 # --- ورقة الدفوعات ---
 PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
 PAY_ALIASES = {
