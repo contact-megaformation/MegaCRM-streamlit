@@ -355,6 +355,68 @@ if role == "أدمن":
     st.markdown("---")
     st.markdown("### 🗑️ تنبيه بخصوص الحذف")
     st.warning("⚠️ حذف أوراق الموظفين يُنصح يكون يدويًا من Google Sheets لأسباب أمان.")
+    st.markdown("---")
+    st.markdown("## 💳 جميع الدفوعات (أدمن)")
+
+    # قفل/فتح «جميع الدفوعات»
+    admin_payments_lock_ui()
+
+    if admin_payments_unlocked():
+        try:
+            sh = client.open_by_key(SPREADSHEET_ID)
+
+            # نجمع الدفوعات من كل أوراق الموظفين (all_employes محضّرة من قبل)
+            df_allp = read_all_payments_concat(sh, all_employes)
+
+            if df_allp.empty:
+                st.info("لا توجد دفوعات بعد.")
+            else:
+                # فلاتر سريعة
+                fc1, fc2, fc3, fc4 = st.columns(4)
+                with fc1:
+                    emp_sel = st.multiselect("الموظفون", sorted(df_allp["Employe"].unique().tolist()))
+                with fc2:
+                    tel_q = st.text_input("بحث بالهاتف (جزئي)")
+                with fc3:
+                    form_q = st.text_input("بحث بالتكوين (جزئي)")
+                with fc4:
+                    # نطاق تاريخ اختياري
+                    d1 = st.date_input("من تاريخ", value=None)
+                    d2 = st.date_input("إلى تاريخ", value=None)
+
+                dfv = df_allp.copy()
+
+                if emp_sel:
+                    dfv = dfv[dfv["Employe"].isin(emp_sel)]
+                if tel_q.strip():
+                    q = "".join(ch for ch in tel_q if ch.isdigit())
+                    dfv = dfv[dfv["Tel"].str.contains(q, na=False)]
+                if form_q.strip():
+                    qf = form_q.strip().lower()
+                    dfv = dfv[dfv["Formation"].astype(str).str.lower().str.contains(qf, na=False)]
+
+                if "Date_dt" in dfv.columns:
+                    if isinstance(d1, date):
+                        dfv = dfv[dfv["Date_dt"].dt.date >= d1]
+                    if isinstance(d2, date):
+                        dfv = dfv[dfv["Date_dt"].dt.date <= d2]
+
+                # مجاميع
+                total_paid = float(dfv["Montant"].sum()) if not dfv.empty else 0.0
+                total_rest = float(dfv["Reste"].sum())   if not dfv.empty else 0.0
+                colt1, colt2 = st.columns(2)
+                with colt1:
+                    st.metric("إجمالي المدفوع", f"{total_paid:,.2f}")
+                with colt2:
+                    st.metric("إجمالي المتبقي (حسب الصفوف)", f"{total_rest:,.2f}")
+
+                # عرض
+                show_cols = ["Employe", "Tel", "Formation", "Prix", "Montant", "Reste", "Date"]
+                st.dataframe(dfv[show_cols], use_container_width=True)
+        except Exception as e:
+            st.error(f"تعذّر قراءة الدفوعات: {e}")
+    else:
+        st.info("🔒 هذا القسم مقفول بكلمة سر الأدمن.")
 
 # ================== 🔎 بحث عام برقم الهاتف ==================
 st.subheader("🔎 بحث عام برقم الهاتف")
@@ -750,7 +812,94 @@ def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, pri
     row = [phone_norm, str(formation or ""), f"{float(prix_total):.2f}", f"{float(montant):.2f}", fmt_date(dt), f"{reste:.2f}"]
     ws.append_row(row)
     return reste
+# ===== Admin Payments Lock (password just for admin view) =====
+def _admin_pay_session_key_open() -> str:
+    return "admin_payments_ok"
 
+def _admin_pay_session_key_time() -> str:
+    return "admin_payments_ok_at"
+
+def _admin_pay_password() -> str:
+    try:
+        return str(st.secrets["admin_payments"]["password"])
+    except Exception:
+        # fallback لو ما ضبطتش السرّ في secrets.toml
+        return "admin123"
+
+def admin_payments_unlocked() -> bool:
+    ok = st.session_state.get(_admin_pay_session_key_open(), False)
+    ts = st.session_state.get(_admin_pay_session_key_time())
+    if ok and ts and (datetime.now() - ts) <= timedelta(minutes=20):
+        return True
+    # انتهت المهلة أو مش مفتوح
+    st.session_state[_admin_pay_session_key_open()] = False
+    st.session_state[_admin_pay_session_key_time()] = None
+    return False
+
+def admin_payments_lock_ui():
+    with st.expander("🔒 حماية «جميع الدفوعات» (Admin)", expanded=not admin_payments_unlocked()):
+        if admin_payments_unlocked():
+            c1, c2 = st.columns([1,1])
+            with c1:
+                st.success("مفتوح (يغلق آليًا بعد 20 دقيقة).")
+            with c2:
+                if st.button("🔐 قفل الآن", use_container_width=True):
+                    st.session_state[_admin_pay_session_key_open()] = False
+                    st.session_state[_admin_pay_session_key_time()] = None
+                    st.info("تم القفل.")
+        else:
+            pwd_try = st.text_input("أدخل كلمة السر لفتح «جميع الدفوعات»", type="password", key="admin_pay_pwd")
+            if st.button("🔓 فتح", use_container_width=True):
+                if pwd_try and pwd_try == _admin_pay_password():
+                    st.session_state[_admin_pay_session_key_open()] = True
+                    st.session_state[_admin_pay_session_key_time()] = datetime.now()
+                    st.success("تم الفتح لمدة 20 دقيقة.")
+                else:
+                    st.error("كلمة السر غير صحيحة.")
+
+# ===== Read ALL payments (concat all *_PAIEMENTS sheets) =====
+def read_all_payments_concat(sh, employees: list[str]) -> pd.DataFrame:
+    """يلمّ كل الدفوعات من أوراق الموظفين *_PAIEMENTS ويضيف عمود الموظف."""
+    all_rows = []
+    for emp in employees:
+        try:
+            ws = ensure_payments_ws(sh, emp)  # يضمن ورقة PAIEMENTS والهيدر
+            rows = ws.get_all_values()
+            if not rows or len(rows) == 1:
+                continue
+            data = rows[1:]
+            # ثبّت طول الصفوف على طول الهيدر
+            fixed = []
+            for r in data:
+                r = list(r)
+                if len(r) < len(PAY_HEADERS_STD):
+                    r += [""] * (len(PAY_HEADERS_STD) - len(r))
+                else:
+                    r = r[:len(PAY_HEADERS_STD)]
+                fixed.append(r)
+            df = pd.DataFrame(fixed, columns=PAY_HEADERS_STD)
+            df["Employe"] = emp
+            all_rows.append(df)
+        except Exception:
+            # تجاهل أي ورقة مش متاحة
+            continue
+    if not all_rows:
+        return pd.DataFrame(columns=PAY_HEADERS_STD + ["Employe"])
+    big = pd.concat(all_rows, ignore_index=True)
+
+    # تطبيع وتحضير
+    big["Tel"] = big["Tel"].apply(normalize_tn_phone)
+    big["Prix"] = big["Prix"].apply(_to_float)
+    big["Montant"] = big["Montant"].apply(_to_float)
+    big["Reste"] = big["Reste"].apply(_to_float)
+    try:
+        big["Date_dt"] = pd.to_datetime(big["Date"], dayfirst=True, errors="coerce")
+    except Exception:
+        big["Date_dt"] = pd.NaT
+
+    # ترتيب زمني
+    big = big.sort_values(["Employe", "Tel", "Date_dt"], ascending=[True, True, True])
+    return big
 # ===== 💳 الدفوعات (مقفولة بكلمة سرّ حسب الموظّف) =====
 if role == "موظف" and employee:
     st.markdown("## 💳 الدفوعات")
