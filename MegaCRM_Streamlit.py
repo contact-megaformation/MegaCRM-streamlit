@@ -685,6 +685,8 @@ def payments_unlocked() -> bool:
     st.session_state["payments_ok"] = False
     st.session_state["payments_ok_at"] = None
     return False
+    st.write("👤 employee = ", employee)
+st.write("🔑 expected password = ", _get_pay_password_for(employee))
 def payments_lock_ui(user_login: str | None):
     """UI بسيط لفتح/غلق المدفوعات بكلمة سرّ."""
 
