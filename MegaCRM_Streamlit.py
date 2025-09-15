@@ -233,6 +233,44 @@ else:
     with c3: st.metric("✅ المسجّلون اليوم", f"{registered_today}")
     with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+# ===== إحصائيات مفصّلة: حسب الموظّف =====
+df_stats = df_all.copy()
+df_stats["Inscription_norm"] = df_stats["Inscription"].fillna("").astype(str).str.strip().str.lower()
+df_stats["Alerte_norm"]      = df_stats["Alerte_view"].fillna("").astype(str).str.strip()
+df_stats["DateAjout_dt"]     = pd.to_datetime(df_stats.get("Date ajout"), dayfirst=True, errors="coerce")
+df_stats["DateSuivi_dt"]     = pd.to_datetime(df_stats.get("Date de suivi"), dayfirst=True, errors="coerce")
+today = datetime.now().date()
+
+added_today_mask      = df_stats["DateAjout_dt"].dt.date.eq(today)
+registered_today_mask = df_stats["Inscription_norm"].isin(["oui","inscrit"]) & added_today_mask
+alert_now_mask        = df_stats["Alerte_norm"].ne("")
+
+df_stats["__added_today"] = added_today_mask
+df_stats["__reg_today"]   = registered_today_mask
+df_stats["__has_alert"]   = alert_now_mask
+
+grp_base = (
+    df_stats.groupby("__sheet_name", dropna=False)
+    .agg(
+        Clients   = ("Nom & Prénom", "count"),
+        Inscrits  = ("Inscription_norm", lambda x: (x == "oui").sum()),
+        تنبيهات     = ("__has_alert", "sum"),
+        مضافون_اليوم = ("__added_today", "sum"),
+        مسجلون_اليوم = ("__reg_today", "sum"),
+    )
+    .reset_index()
+    .rename(columns={"__sheet_name": "الموظف"})
+)
+
+grp_base["% تسجيل"] = (
+    (grp_base["Inscrits"] / grp_base["Clients"]).replace([float("inf"), float("nan")], 0) * 100
+).round(2)
+
+# ترتيب: الأكثر تنبيهات ثم الأكثر عملاء
+grp_base = grp_base.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
+
+st.markdown("#### حسب الموظّف")
+st.dataframe(grp_base, use_container_width=True)
 
 # ===== Global search by phone =====
 st.subheader("🔎 بحث عام برقم الهاتف")
