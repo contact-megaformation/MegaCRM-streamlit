@@ -666,7 +666,14 @@ if role == "موظف" and employee:
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
-            def render_table(df_disp: pd.DataFrame):
+    st.markdown("### 📋 قائمة العملاء")
+    render_table(filtered_df)
+
+    if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+        _df = filtered_df.copy(); _df["Alerte"] = _df.get("Alerte_view", "")
+        alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
+        st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
+def render_table(df_disp: pd.DataFrame):
     if df_disp.empty:
         st.info("لا توجد بيانات.")
         return
@@ -675,7 +682,7 @@ if role == "موظف" and employee:
     _df["Alerte"] = _df.get("Alerte_view", "")
 
     # 🟢 دالة تحضّر رابط الواتساب
-    def _wa_link(row):
+def _wa_link(row):
         tel = normalize_tn_phone(row.get("Téléphone", ""))
         if not tel:
             return ""
@@ -705,15 +712,6 @@ if role == "موظف" and employee:
             )
         }
     )
-
-    
-    st.markdown("### 📋 قائمة العملاء")
-    render_table(filtered_df)
-
-    if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
-        _df = filtered_df.copy(); _df["Alerte"] = _df.get("Alerte_view", "")
-        alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
-        st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
 
     # -------- Edit client --------
     if not df_emp.empty:
