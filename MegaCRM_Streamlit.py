@@ -666,19 +666,20 @@ if role == "موظف" and employee:
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
-    def render_table(df_disp: pd.DataFrame):
+            def render_table(df_disp: pd.DataFrame):
     if df_disp.empty:
-        st.info("لا توجد بيانات."); return
+        st.info("لا توجد بيانات.")
+        return
 
     _df = df_disp.copy()
     _df["Alerte"] = _df.get("Alerte_view", "")
 
     # 🟢 دالة تحضّر رابط الواتساب
     def _wa_link(row):
-        tel = normalize_tn_phone(row.get("Téléphone",""))
+        tel = normalize_tn_phone(row.get("Téléphone", ""))
         if not tel:
             return ""
-        name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
+        name = str(row.get("Nom & Prénom", "")).strip().replace(" ", "%20")
         txt = f"السلام%20عليكم%20{name}"
         return f"https://wa.me/{tel}?text={txt}"
 
@@ -705,7 +706,7 @@ if role == "موظف" and employee:
         }
     )
 
-        
+    
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
