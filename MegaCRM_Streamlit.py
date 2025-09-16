@@ -668,10 +668,10 @@ if role == "موظف" and employee:
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
     def render_table(df_disp: pd.DataFrame):
         if df_disp.empty:
-        st.info("لا توجد بيانات."); return
+            st.info("لا توجد بيانات."); return
 
-    _df = df_disp.copy()
-    _df["Alerte"] = _df.get("Alerte_view", "")
+        _df = df_disp.copy()
+        _df["Alerte"] = _df.get("Alerte_view", "")
 
     # نحضّر رابط واتساب كرابط قابل للضغط (wa.me)
     def _wa_link(row):
