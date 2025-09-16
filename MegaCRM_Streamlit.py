@@ -100,29 +100,56 @@ def _to_num(s):
     return pd.to_numeric(str(s).replace(" ", "").replace(",", "."), errors="coerce")
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
-    cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
+    cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
     values = ws.get_all_values()
     if not values:
+        # ارجع DataFrame فاضي بنفس الأعمدة
         return pd.DataFrame(columns=cols)
+
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
-    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
+    # ضمّن كل الأعمدة المتوقعة حتى لو ناقصة في الشيت
+    for c in cols:
+        if c not in df.columns:
+            df[c] = None
 
-    if kind=="Revenus":
-        for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
-            if c in df.columns: df[c] = df[c].apply(_to_num)
+    # تحويل التواريخ إلى datetime (وليس date)
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+    if kind == "Revenus" and "Echeance" in df.columns:
+        df["Echeance"] = pd.to_datetime(df["Echeance"], dayfirst=True, errors="coerce")
+
+    # تحويل الأرقام
+    def _num_series(s):
+        return (
+            s.astype(str)
+             .str.replace(" ", "", regex=False)
+             .str.replace(",", ".", regex=False)
+             .str.replace("DT", "", regex=False)
+             .str.replace("TND", "", regex=False)
+             .str.replace("د.", "", regex=False)
+             .str.replace("د", "", regex=False)
+             .str.replace("€", "", regex=False)
+             .str.replace("$", "", regex=False)
+        )
+
+    if kind == "Revenus":
+        for c in ["Prix", "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total", "Reste"]:
+            if c in df.columns:
+                df[c] = pd.to_numeric(_num_series(df[c]), errors="coerce").fillna(0.0)
     else:
-        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
+        if "Montant" in df.columns:
+            df["Montant"] = pd.to_numeric(_num_series(df["Montant"]), errors="coerce").fillna(0.0)
 
-    if kind=="Revenus":
-        today = datetime.now().date()
+    # Alerts: استعمل Timestamp للـ today لتفادي TypeError
+    if kind == "Revenus":
+        today_ts = pd.Timestamp.now().normalize()  # منتصف الليل اليوم
         df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
-            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
-            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
-            df.loc[late_mask, "Alert"] = "⚠️ متأخر"
+            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today_ts) & (df["Reste"] > 0)
+            today_mask = df["Echeance"].notna() & (df["Echeance"] == today_ts) & (df["Reste"] > 0)
+            df.loc[late_mask,  "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
@@ -641,32 +668,44 @@ if role == "موظف" and employee:
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
     def render_table(df_disp: pd.DataFrame):
-        if df_disp.empty:
-            st.info("لا توجد بيانات."); return
-        _df = df_disp.copy()
-        _df["Alerte"] = _df.get("Alerte_view", "")
-        # زرّ واتساب: نضيف عمود فيه رابط wa.me
-        def _wa_link(row):
-            tel = normalize_tn_phone(row.get("Téléphone",""))
-            if not tel: return ""
-            name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
-            txt = f"Bonjour%20{name}"
-            return f"https://wa.me/{tel}?text={txt}"
-        _df["WhatsApp"] = _wa_link  # placeholder to apply on rows
-        _df["WhatsApp"] = _df.apply(lambda r: _wa_link(r), axis=1)
+    if df_disp.empty:
+        st.info("لا توجد بيانات."); return
 
-        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
-        # نخلي رابط الواتساب ظاهر كعمود
-        display_cols = display_cols + ["WhatsApp"]
-        styled = (
-            _df[display_cols]
-            .style.apply(highlight_inscrit_row, axis=1)
-            .applymap(mark_alert_cell, subset=["Alerte"])
-            .applymap(color_tag, subset=["Tag"])
-        )
-        st.dataframe(styled, use_container_width=True)
-        st.caption("📲 عمود WhatsApp يحتوي رابط مباشر لفتح المحادثة.")
+    _df = df_disp.copy()
+    _df["Alerte"] = _df.get("Alerte_view", "")
 
+    # نحضّر رابط واتساب كرابط قابل للضغط (wa.me)
+    def _wa_link(row):
+        tel = normalize_tn_phone(row.get("Téléphone",""))
+        if not tel:
+            return ""
+        name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
+        txt = f"Bonjour%20{name}"
+        return f"https://wa.me/{tel}?text={txt}"
+
+    _df["WhatsApp"] = _df.apply(_wa_link, axis=1)
+
+    display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns] + ["WhatsApp"]
+
+    # تلوين الصفوف/الخانات + تعريف عمود لينك للواتساب
+    styled = (
+        _df[display_cols]
+        .style.apply(highlight_inscrit_row, axis=1)
+        .applymap(mark_alert_cell, subset=["Alerte"])
+        .applymap(color_tag, subset=["Tag"])
+    )
+
+    st.dataframe(
+        styled,
+        use_container_width=True,
+        column_config={
+            "WhatsApp": st.column_config.LinkColumn(
+                "📲 WhatsApp",
+                help="افتح محادثة واتساب مع العميل",
+                display_text="فتح الواتساب"
+            )
+        }
+    )
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
@@ -812,7 +851,54 @@ if role == "موظف" and employee:
                     st.success("✅ تم التلوين"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
+# === نقل عميل بين الموظفين (يبقى ظاهر ديما) ===
+st.markdown("### 🔁 نقل عميل بين الموظفين")
+if all_employes:
+    colRA, colRB = st.columns(2)
+    with colRA:
+        src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src_emp")
+    with colRB:
+        dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst_emp")
 
+    df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
+
+    if df_src.empty:
+        st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+    else:
+        pick = st.selectbox(
+            "اختر العميل للنقل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
+            key="reassign_pick_key"
+        )
+        phone_pick = normalize_tn_phone(pick.split("—")[-1])
+
+        if st.button("🚚 نقل الآن", key="reassign_go_btn"):
+            try:
+                sh = client.open_by_key(SPREADSHEET_ID)
+                ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
+                values = ws_src.get_all_values()
+                header = values[0] if values else []
+                row_idx = None
+                if "Téléphone" in header:
+                    tel_idx = header.index("Téléphone")
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == phone_pick:
+                            row_idx = i; break
+                if not row_idx:
+                    st.error("❌ لم يتم العثور على هذا العميل.")
+                else:
+                    row_values = ws_src.row_values(row_idx)
+                    if len(row_values) < len(EXPECTED_HEADERS):
+                        row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
+                    row_values = row_values[:len(EXPECTED_HEADERS)]
+                    row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                    ws_dst.append_row(row_values)
+                    ws_src.delete_rows(row_idx)
+                    st.success(f"✅ تم نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
+                    st.cache_data.clear()
+                    st.rerun()
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء النقل: {e}")
 # ---------------- Admin Page ----------------
 if role == "أدمن":
     st.markdown("## 👑 لوحة الأدمِن")
