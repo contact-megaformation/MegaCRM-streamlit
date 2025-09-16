@@ -330,26 +330,31 @@ if tab_choice == "Finance (MB/Bizerte)":
         c.metric("الصافي", f"{(rev-dep):,.2f}")
 
     # ربط Revenus بعميل مُسجَّل (اقتراح libellé/Employé)
-    st.markdown("---"); st.markdown("### ➕ إضافة عملية جديدة")
-    selected_client_info, client_default_lib = None, ""
-    client_default_emp = employee or ""
+        st.markdown("---")
+    st.markdown("### ➕ إضافة عملية جديدة")
+
+    selected_client_info = None
+    client_default_lib = ""
+    client_default_emp = (st.session_state.get("employee","") or "")
+
     if kind == "Revenus":
         st.markdown("#### 👤 اربط الدفعة بعميل مُسجَّل")
         reg_df = df_all.copy()
         reg_df["Inscription_norm"] = reg_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
         reg_df = reg_df[reg_df["Inscription_norm"].isin(["oui","inscrit"])]
+
         if role == "موظف" and employee:
             reg_df = reg_df[reg_df["__sheet_name"] == employee]
-        if reg_df.empty:
-            st.info("لا يوجد عملاء مُسجَّلين ضمن هذا النطاق.")
-        else:
+
+        if not reg_df.empty:
             def _opt(row):
                 phone = format_display_phone(row.get("Téléphone",""))
-                return f"{row.get('Nom & Prénom','')} — {phone} — {row.get('Formation','')}  [{row.get('__sheet_name','')}]"
+                return f"{row.get('Nom & Prénom','')} — {phone} — {row.get('Formation','')} [{row.get('__sheet_name','')}]"
             options = [_opt(r) for _, r in reg_df.iterrows()]
             pick = st.selectbox("اختر عميلًا مُسجَّلًا (اختياري)", ["— بدون اختيار —"] + options, key="fin_client_pick")
             if pick and pick != "— بدون اختيار —":
-                idx = options.index(pick); row = reg_df.iloc[idx]
+                idx = options.index(pick)
+                row = reg_df.iloc[idx]
                 selected_client_info = {
                     "name": str(row.get("Nom & Prénom","")).strip(),
                     "tel":  str(row.get("Téléphone","")).strip(),
@@ -357,37 +362,60 @@ if tab_choice == "Finance (MB/Bizerte)":
                     "emp": str(row.get("__sheet_name","")).strip()
                 }
                 client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
-                if not client_default_emp: client_default_emp = selected_client_info["emp"]
-                st.caption(f"سيتم اقتراح: **Libellé =** {client_default_lib}  —  **Employé =** {client_default_emp}")
+                if not client_default_emp:
+                    client_default_emp = selected_client_info["emp"]
 
-    with st.form("fin_add_row"):
+    with st.form("fin_add_row_v2"):
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            prix_total = st.number_input("💰 Prix (سعر التكوين)", min_value=0.0, step=10.0)
+        with c2:
+            montant_admin = st.number_input("🏢 مدفوع الإدارة", min_value=0.0, step=10.0)
+        with c3:
+            montant_struct = st.number_input("🏫 مدفوع الهيكل", min_value=0.0, step=10.0)
+
         d1, d2, d3 = st.columns(3)
-        date_val = d1.date_input("Date", value=datetime.today(), key="fin_date")
-        libelle  = d2.text_input("Libellé", client_default_lib, key="fin_lib")
-        montant  = d3.number_input("Montant", min_value=0.0, step=1.0, format="%.2f", key="fin_montant")
-        e1, e2, e3 = st.columns(3)
-        mode      = e1.selectbox("Mode", ["Espèces","Virement","Carte","Autre"], key="fin_mode")
-        employe   = e2.text_input("Employé", value=client_default_emp or "", key="fin_emp")
-        categorie = e3.text_input("Catégorie", value=("Vente" if kind=="Revenus" else "Achat"), key="fin_cat")
-        note_default = ""
-        if selected_client_info:
-            note_default = f"Client: {selected_client_info['name']} / {format_display_phone(selected_client_info['tel'])} / {selected_client_info['formation']}"
-        note = st.text_area("Note", note_default, key="fin_note")
+        with d1:
+            date_val = st.date_input("📅 تاريخ الدفع", value=datetime.today())
+        with d2:
+            echeance = st.date_input("⏰ تاريخ الاستحقاق", value=datetime.today())
+        with d3:
+            branch = st.selectbox("🏢 الفرع", ["Menzel Bourguiba","Bizerte"])
+
+        libelle  = st.text_input("📝 Libellé", value=client_default_lib)
+        employe  = st.text_input("👨‍💼 Employé", value=client_default_emp)
+        categorie = st.text_input("📂 Catégorie", value=("Vente" if kind=="Revenus" else "Achat"))
+        note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
+        note = st.text_area("🗒️ Note", value=note_default)
+
+        total_now = montant_admin + montant_struct
+        reste_preview = max(prix_total - total_now, 0.0)
+        st.caption(f"💡 المجموع الحالي: {total_now:.2f} — الباقي بعد الحفظ: {reste_preview:.2f}")
+
         if st.form_submit_button("✅ حفظ العملية"):
-            if not libelle.strip(): st.error("Libellé مطلوب.")
-            elif montant <= 0:     st.error("المبلغ لازم > 0.")
-            elif role == "موظف" and not employe.strip(): st.error("اسم الموظّف مطلوب.")
+            if prix_total <= 0:
+                st.error("❌ Prix مطلوب.")
+            elif total_now <= 0:
+                st.error("❌ لازم على الأقل مدفوع واحد.")
             else:
-                fin_append_row(client, SPREADSHEET_ID, fin_title, {
-                    "Date": date_val.strftime("%d/%m/%Y"),
-                    "Libellé": libelle.strip(),
-                    "Montant": f"{montant:.2f}",
-                    "Mode": mode,
-                    "Employé": employe.strip(),
-                    "Catégorie": categorie.strip(),
-                    "Note": note.strip(),
-                })
-                st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
+                fin_append_row(
+                    client, SPREADSHEET_ID, fin_title,
+                    {
+                        "Date": date_val.strftime("%d/%m/%Y"),
+                        "Libellé": libelle.strip(),
+                        "Prix": f"{prix_total:.2f}",
+                        "Montant_Admin": f"{montant_admin:.2f}",
+                        "Montant_Structure": f"{montant_struct:.2f}",
+                        "Montant_Total": f"{total_now:.2f}",
+                        "Echeance": echeance.strftime("%d/%m/%Y"),
+                        "Reste": f"{reste_preview:.2f}",
+                        "Branch": branch,
+                        "Employé": employe.strip(),
+                        "Catégorie": categorie.strip(),
+                        "Note": note.strip(),
+                    }
+                )
+                st.success("✅ تمت العملية"); st.cache_data.clear(); st.rerun()
     st.stop()
 
 # =================== Derivatives for CRM ===================
