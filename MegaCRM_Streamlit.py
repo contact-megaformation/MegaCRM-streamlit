@@ -674,34 +674,34 @@ if role == "موظف" and employee:
         _df["Alerte"] = _df.get("Alerte_view", "")
 
     # نحضّر رابط واتساب كرابط قابل للضغط (wa.me)
-    def _wa_link(row):
-        tel = normalize_tn_phone(row.get("Téléphone",""))
-        if not tel:
-            return ""
-        name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
-        txt = f"Bonjour%20{name}"
-        return f"https://wa.me/{tel}?text={txt}"
+        def _wa_link(row):
+            tel = normalize_tn_phone(row.get("Téléphone",""))
+            if not tel:
+                return ""
+            name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
+            txt = f"Bonjour%20{name}"
+            return f"https://wa.me/{tel}?text={txt}"
 
-    _df["WhatsApp"] = _df.apply(_wa_link, axis=1)
+        _df["WhatsApp"] = _df.apply(_wa_link, axis=1)
 
-    display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns] + ["WhatsApp"]
+        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns] + ["WhatsApp"]
 
     # تلوين الصفوف/الخانات + تعريف عمود لينك للواتساب
-    styled = (
-        _df[display_cols]
-        .style.apply(highlight_inscrit_row, axis=1)
-        .applymap(mark_alert_cell, subset=["Alerte"])
-        .applymap(color_tag, subset=["Tag"])
+        styled = (
+            _df[display_cols]
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"])
+            .applymap(color_tag, subset=["Tag"])
     )
 
-    st.dataframe(
-        styled,
-        use_container_width=True,
-        column_config={
-            "WhatsApp": st.column_config.LinkColumn(
-                "📲 WhatsApp",
-                help="افتح محادثة واتساب مع العميل",
-                display_text="فتح الواتساب"
+        st.dataframe(
+            styled,
+            use_container_width=True,
+            column_config={
+                "WhatsApp": st.column_config.LinkColumn(
+                    "📲 WhatsApp",
+                    help="افتح محادثة واتساب مع العميل",
+                    display_text="فتح الواتساب"
             )
         }
     )
