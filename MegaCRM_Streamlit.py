@@ -544,7 +544,7 @@ if role == "موظف" and employee:
 
     # Counters + formation filter
     if not filtered_df.empty:
-        pending_mask = filtered_df["Remarque"].fillna("").astype(str).strip() == ""
+        pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
         st.markdown("### 📊 متابعتك")
         st.metric("⏳ مضافين بلا ملاحظات", int(pending_mask.sum()))
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
