@@ -116,29 +116,44 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    # parse dates
-    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
-    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
+    # --- Dates -> pandas Timestamp ---
+    def _parse_date_any(x):
+        for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%m/%d/%Y"):
+            try: 
+                return datetime.strptime(str(x), fmt)
+            except:
+                pass
+        return pd.NaT
 
-    # parse numbers
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"].apply(_parse_date_any), errors="coerce")
+    if kind=="Revenus" and "Echeance" in df.columns:
+        df["Echeance"] = pd.to_datetime(df["Echeance"].apply(_parse_date_any), errors="coerce")
+
+    # --- Numbers ---
+    def _to_num(s):
+        return pd.to_numeric(str(s).replace(" ", "").replace(",", "."), errors="coerce")
+
     if kind=="Revenus":
         for c in ["Prix","Montant_Admin","Montant_Structure","Montant_Total","Reste"]:
-            if c in df.columns: df[c] = df[c].apply(_to_num)
+            if c in df.columns:
+                df[c] = df[c].apply(_to_num)
     else:
-        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
+        if "Montant" in df.columns:
+            df["Montant"] = df["Montant"].apply(_to_num)
 
-    # compute Alert (view)
+    # --- Alert (view) على المداخيل ---
     if kind=="Revenus":
-        today = datetime.now().date()
+        today_ts = pd.Timestamp.today().normalize()  # 00:00 لليوم
         df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
-            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
-            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
-            df.loc[late_mask, "Alert"] = "⚠️ متأخر"
+            mask_has_due = df["Echeance"].notna() & df["Reste"].fillna(0).gt(0)
+            late_mask  = mask_has_due & (df["Echeance"] < today_ts)
+            today_mask = mask_has_due & (df["Echeance"] == today_ts)
+            df.loc[late_mask,  "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
-
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
@@ -815,7 +830,8 @@ if role == "موظف" and employee:
                 st.success("✅ تم إضافة العميل"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الإضافة: {e}")
-
+wa_link = f"https://wa.me/{normalize_tn_phone(row['Téléphone'])}?text=Bonjour%20{row['Nom & Prénom']}"
+st.markdown(f"[📲 WhatsApp]({wa_link})", unsafe_allow_html=True)
     # -------- Reassign between employees --------
     st.markdown("### 🔁 نقل عميل بين الموظفين")
     if all_employes:
