@@ -1,14 +1,15 @@
-# MegaCRM_Streamlit_App.py — CRM + Finance (MB/Bizerte) + Employee Locks
+# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف
 # ===========================================================
 # ✅ CRM كامل: قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة عميل، نقل بين الموظفين
 # ✅ Admin: فتح بكلمة سر 30 دقيقة، إضافة/حذف موظف، إضافة عميل لأي موظف
-# ✅ Finance: تبويب مستقل
-#    - Revenus: Prix + Montant_Admin + Montant_Structure + Montant_Total (أوتوماتيك)
-#    - Dépenses: بسيطة (Libellé + Montant + اختياري الباقي)
-#    - ملخّص شهري: Admin وحدو، Structure وحدو، Total Revenus وحدو، Total Dépenses وحدو
+# ✅ تبويب "مداخيل (MB/Bizerte)":
+#    - مداخيل (Revenus): Prix + Montant_Admin + Montant_Structure + Montant_Total (أوتو)
+#      + Echeance + Reste (أوتو) + Alert
+#      + Rubrique_Inscription (روبرك التسجيل)
+#    - مصاريف (Dépenses): إضافة Caisse_Source (Caisse_Admin / Caisse_Structure / Caisse_Inscription)
+#    - ملخّص شهري: Admin/Structure/Total Revenus + Total Dépenses + مجموع Reste
 # ✅ حماية كل ورقة موظف بكلمة سر لمدة 15 دقيقة
 # ✅ إخفاء أوراق: *_PAIEMENTS و "_" و كل أوراق المالية (Revenue*/Dépense*) من قائمة الموظفين
-# ✅ بدون قسم الدفوعات القديم عند الموظفين
 
 import json, time
 import streamlit as st
@@ -56,13 +57,15 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
-# Finance columns
+# أعمدة المداخيل (زِدنا Echeance, Reste, Rubrique_Inscription)
 FIN_REV_COLUMNS = [
     "Date", "Libellé", "Prix",
     "Montant_Admin", "Montant_Structure", "Montant_Total",
+    "Echeance", "Reste", "Rubrique_Inscription",
     "Mode", "Employé", "Catégorie", "Note"
 ]
-FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Mode","Employé","Catégorie","Note"]
+# أعمدة المصاريف (زِدنا Caisse_Source)
+FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
 # ---------------- Finance helpers ----------------
@@ -75,6 +78,7 @@ def _branch_passwords():
         return {"Menzel Bourguiba": "MB_2025!", "Bizerte": "BZ_2025!"}
 
 def fin_month_title(mois: str, kind: str, branch: str):
+    # kind: "Revenus" أو "Dépenses"
     prefix = "Revenue " if kind == "Revenus" else "Dépense "
     short = "MB" if "Menzel" in branch else "BZ"
     return f"{prefix}{mois} ({short})"
@@ -95,6 +99,15 @@ def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
             ws.update("1:1", [columns])
     return ws
 
+def _parse_date_any(x):
+    for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%m/%d/%Y"):
+        try: return datetime.strptime(str(x), fmt).date()
+        except: pass
+    return pd.NaT
+
+def _to_num(s):
+    return pd.to_numeric(str(s).replace(" ", "").replace(",", "."), errors="coerce")
+
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
@@ -103,33 +116,27 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    # parse date
-    if "Date" in df.columns:
-        def _p(x):
-            for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%m/%d/%Y"):
-                try: return datetime.strptime(str(x), fmt).date()
-                except: pass
-            return pd.NaT
-        df["Date"] = df["Date"].apply(_p)
+    # parse dates
+    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
+    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
 
-    # parse amounts
+    # parse numbers
     if kind=="Revenus":
-        for c in ["Prix","Montant_Admin","Montant_Structure","Montant_Total"]:
-            if c in df.columns:
-                df[c] = (
-                    df[c].astype(str)
-                    .str.replace(",", ".", regex=False)
-                    .str.replace(" ", "", regex=False)
-                    .apply(lambda x: pd.to_numeric(x, errors="coerce"))
-                )
+        for c in ["Prix","Montant_Admin","Montant_Structure","Montant_Total","Reste"]:
+            if c in df.columns: df[c] = df[c].apply(_to_num)
     else:
-        if "Montant" in df.columns:
-            df["Montant"] = (
-                df["Montant"].astype(str)
-                .str.replace(",", ".", regex=False)
-                .str.replace(" ", "", regex=False)
-                .apply(lambda x: pd.to_numeric(x, errors="coerce"))
-            )
+        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
+
+    # compute Alert (view)
+    if kind=="Revenus":
+        today = datetime.now().date()
+        df["Alert"] = ""
+        if "Echeance" in df.columns and "Reste" in df.columns:
+            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
+            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
+            df.loc[late_mask, "Alert"] = "⚠️ متأخر"
+            df.loc[today_mask, "Alert"] = "⏰ اليوم"
+
     return df
 
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
@@ -161,7 +168,7 @@ def color_tag(val):
 def mark_alert_cell(val: str):
     s = str(val).strip()
     if not s: return ''
-    if "متأخرة" in s: return 'background-color: #ffe6b3; color: #7a4e00'
+    if "متأخر" in s: return 'background-color: #ffe6b3; color: #7a4e00'
     return 'background-color: #ffcccc; color: #7a0000'
 
 def highlight_inscrit_row(row: pd.Series):
@@ -170,7 +177,6 @@ def highlight_inscrit_row(row: pd.Series):
 
 # ---------------- Employee Password Locks ----------------
 def _get_emp_password(emp_name: str) -> str:
-    """كلمة سرّ لكل موظّف من secrets.employee_passwords أو default."""
     try:
         mp = st.secrets["employee_passwords"]
         return str(mp.get(emp_name, mp.get("_default", "1234")))
@@ -254,21 +260,22 @@ try:
 except Exception:
     pass
 
-tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "Finance (MB/Bizerte)"], index=0)
+tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)"], index=0)
 role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
 employee = None
 if role == "موظف":
     employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if all_employes else None
 
-# ---------------- Finance Tab ----------------
-if tab_choice == "Finance (MB/Bizerte)":
-    st.title("💸 المالية — مداخيل/مصاريف (منزل بورقيبة & بنزرت)")
+# ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
+if tab_choice == "مداخيل (MB/Bizerte)":
+    st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
 
     with st.sidebar:
         st.markdown("---")
-        st.subheader("🔧 إعدادات المالية")
+        st.subheader("🔧 إعدادات المداخيل/المصاريف")
         branch = st.selectbox("الفرع", ["Menzel Bourguiba", "Bizerte"], key="fin_branch")
-        kind   = st.radio("النوع", ["Revenus","Dépenses"], horizontal=True, key="fin_kind")
+        kind_ar = st.radio("النوع", ["مداخيل","مصاريف"], horizontal=True, key="fin_kind_ar")
+        kind = "Revenus" if kind_ar == "مداخيل" else "Dépenses"
         mois   = st.selectbox("الشهر", FIN_MONTHS_FR, index=datetime.now().month-1, key="fin_month")
 
         # كلمة سر الفرع (جلسة)
@@ -306,13 +313,16 @@ if tab_choice == "Finance (MB/Bizerte)":
             if date_to:   df_view = df_view[df_view["Date"] <= pd.to_datetime(date_to)]
         if search:
             m = pd.Series([False]*len(df_view))
-            for col in [c for c in ["Libellé","Catégorie","Mode","Employé","Note"] if c in df_view.columns]:
+            for col in [c for c in ["Libellé","Catégorie","Mode","Employé","Note","Rubrique_Inscription","Caisse_Source"] if c in df_view.columns]:
                 m |= df_view[col].fillna("").str.contains(search, case=False, na=False)
             df_view = df_view[m]
 
     st.subheader(f"📄 {fin_title}")
-    cols_show = (FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS)
-    st.dataframe(df_view[ [c for c in cols_show if c in df_view.columns] ] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
+    if kind == "Revenus":
+        cols_show = [c for c in ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_Total","Echeance","Reste","Rubrique_Inscription","Alert","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
+    else:
+        cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
+    st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
     # ملخّص شهري
     with st.expander("📊 ملخّص الفرع للشهر"):
@@ -322,14 +332,16 @@ if tab_choice == "Finance (MB/Bizerte)":
             sum_admin  = rev_df["Montant_Admin"].sum() if "Montant_Admin" in rev_df.columns else 0
             sum_struct = rev_df["Montant_Structure"].sum() if "Montant_Structure" in rev_df.columns else 0
             sum_total  = rev_df["Montant_Total"].sum() if "Montant_Total" in rev_df.columns else (sum_admin + sum_struct)
+            sum_reste  = rev_df["Reste"].sum() if "Reste" in rev_df.columns else 0
         else:
-            sum_admin = sum_struct = sum_total = 0
+            sum_admin = sum_struct = sum_total = sum_reste = 0
         sum_dep = dep_df["Montant"].sum() if ("Montant" in dep_df.columns and not dep_df.empty) else 0
-        a,b,c,d = st.columns(4)
-        a.metric("Admin (Revenus)",    f"{sum_admin:,.2f}")
-        b.metric("Structure (Revenus)",f"{sum_struct:,.2f}")
-        c.metric("Total Revenus",      f"{sum_total:,.2f}")
-        d.metric("Total Dépenses",     f"{sum_dep:,.2f}")
+        a,b,c,d,e = st.columns(5)
+        a.metric("Admin (مداخيل)",    f"{sum_admin:,.2f}")
+        b.metric("Structure (مداخيل)",f"{sum_struct:,.2f}")
+        c.metric("Total مداخيل",      f"{sum_total:,.2f}")
+        d.metric("Total مصاريف",      f"{sum_dep:,.2f}")
+        e.metric("إجمالي المتبقي",     f"{sum_reste:,.2f}")
 
     # إضافة عملية جديدة
     st.markdown("---")
@@ -376,16 +388,38 @@ if tab_choice == "Finance (MB/Bizerte)":
             montant_admin   = r2.number_input("🏢 Montant Admin", min_value=0.0, step=10.0)
             montant_struct  = r3.number_input("🏫 Montant Structure", min_value=0.0, step=10.0)
             montant_total   = float(montant_admin) + float(montant_struct)
-            st.caption(f"💡 Total = {montant_total:.2f}")
 
             e1, e2, e3 = st.columns(3)
-            mode      = e1.selectbox("Mode", ["Espèces","Virement","Carte","Autre"])
-            categorie = e2.text_input("Catégorie", value="Revenus")
+            echeance   = e1.date_input("⏰ تاريخ الاستحقاق", value=datetime.today())
+            mode       = e2.selectbox("Mode", ["Espèces","Virement","Carte","Autre"])
+            categorie  = e3.text_input("Catégorie", value="Revenus")
+
+            # Rubrique d'inscription
+            rb_default = "Inscription initiale"
+            rubrique_opts = ["Inscription initiale","Réinscription","Acompte","Solde","Autre"]
+            col_rb1, col_rb2 = st.columns([2,1])
+            rubrique = col_rb1.selectbox("Rubrique_Inscription", rubrique_opts, index=rubrique_opts.index(rb_default))
+            rubrique_autre = ""
+            if rubrique == "Autre":
+                rubrique_autre = col_rb2.text_input("اذكر الروبرك", value="", placeholder="مثال: Frais dossier")
+            rubrique_val = (rubrique_autre.strip() if rubrique == "Autre" else rubrique)
+
             note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
-            note      = e3.text_input("Note", value=note_default)
+            note = st.text_area("Note", value=note_default)
+
+            # حساب Reste اعتمادًا على نفس Libellé داخل نفس ورقة الشهر
+            rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_title, "Revenus")
+            paid_so_far = 0.0
+            if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
+                same = rev_df_current[rev_df_current["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()]
+                paid_so_far = float(same["Montant_Total"].sum()) if not same.empty else 0.0
+            reste_after = max(float(prix) - (paid_so_far + float(montant_total)), 0.0)
+
+            st.caption(f"💡 Total الآن: {montant_total:.2f} — مدفوع سابقًا لنفس Libellé: {paid_so_far:.2f} — المتبقّي بعد الحفظ: {reste_after:.2f}")
 
             if st.form_submit_button("✅ حفظ العملية"):
                 if not libelle.strip(): st.error("Libellé مطلوب.")
+                elif prix <= 0: st.error("Prix مطلوب.")
                 elif montant_total <= 0: st.error("المبلغ لازم > 0.")
                 else:
                     fin_append_row(
@@ -393,10 +427,13 @@ if tab_choice == "Finance (MB/Bizerte)":
                         {
                             "Date": fmt_date(date_val),
                             "Libellé": libelle.strip(),
-                            "Prix": f"{prix:.2f}",
-                            "Montant_Admin": f"{montant_admin:.2f}",
-                            "Montant_Structure": f"{montant_struct:.2f}",
-                            "Montant_Total": f"{montant_total:.2f}",
+                            "Prix": f"{float(prix):.2f}",
+                            "Montant_Admin": f"{float(montant_admin):.2f}",
+                            "Montant_Structure": f"{float(montant_struct):.2f}",
+                            "Montant_Total": f"{float(montant_total):.2f}",
+                            "Echeance": fmt_date(echeance),
+                            "Reste": f"{float(reste_after):.2f}",
+                            "Rubrique_Inscription": rubrique_val,
                             "Mode": mode,
                             "Employé": employe.strip(),
                             "Catégorie": categorie.strip(),
@@ -405,12 +442,17 @@ if tab_choice == "Finance (MB/Bizerte)":
                         "Revenus"
                     )
                     st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
-        else:
+
+        else:  # مصاريف
             r1, r2, r3 = st.columns(3)
             montant   = r1.number_input("Montant", min_value=0.0, step=10.0)
-            mode      = r2.selectbox("Mode", ["Espèces","Virement","Carte","Autre"])
-            categorie = r3.text_input("Catégorie", value="Achat")
-            note      = st.text_area("Note (اختياري)")
+            caisse    = r2.selectbox("Caisse_Source", ["Caisse_Admin","Caisse_Structure","Caisse_Inscription"])
+            mode      = r3.selectbox("Mode", ["Espèces","Virement","Carte","Autre"])
+
+            c2, c3 = st.columns(2)
+            categorie = c2.text_input("Catégorie", value="Achat")
+            note      = c3.text_area("Note (اختياري)")
+
             if st.form_submit_button("✅ حفظ العملية"):
                 if not libelle.strip(): st.error("Libellé مطلوب.")
                 elif montant <= 0: st.error("المبلغ لازم > 0.")
@@ -420,7 +462,8 @@ if tab_choice == "Finance (MB/Bizerte)":
                         {
                             "Date": fmt_date(date_val),
                             "Libellé": libelle.strip(),
-                            "Montant": f"{montant:.2f}",
+                            "Montant": f"{float(montant):.2f}",
+                            "Caisse_Source": caisse,
                             "Mode": mode,
                             "Employé": employe.strip(),
                             "Catégorie": categorie.strip(),
@@ -702,7 +745,6 @@ if role == "موظف" and employee:
         if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
             try:
                 ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                # ابحث عن الصف
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 if "Téléphone" in header:
@@ -733,7 +775,6 @@ if role == "موظف" and employee:
         if st.button("🖌️ تلوين"):
             try:
                 ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                # row
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 row_idx = None
@@ -797,7 +838,6 @@ if role == "موظف" and employee:
                 try:
                     sh = client.open_by_key(SPREADSHEET_ID)
                     ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
-                    # ابحث عن الصف
                     values = ws_src.get_all_values()
                     header = values[0] if values else []
                     row_idx = None
