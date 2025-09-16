@@ -1,5 +1,6 @@
-# MegaCRM_Streamlit_App.py — Admin + Employees + Dashboard + Search + Edit + Notes + Tags + Reassign + Payments
-# + Finance (MB/Bizerte) tab with registered-clients picker for Revenus
+# MegaCRM_Streamlit_App.py — CRM + Payments + Finance(MB/Bizerte)
+# دفوعات مطوّرة: نحسب نصيب "الإدارة" وحدو و "الهيكل" وحدو، والباقي Reste أوتوماتيك.
+# ما عادش نخزّن Montant_Total، نحسبوه عند العرض (Admin+Structure).
 
 import json, time
 import streamlit as st
@@ -157,10 +158,8 @@ def load_all_data():
 
     for ws in worksheets:
         title = ws.title.strip()
-        # أخفي أوراق الدفوعات وأي ورقة نظام
         if title.endswith("_PAIEMENTS") or title.startswith("_"):
             continue
-
         all_employes.append(title)
 
         rows = ws.get_all_values()
@@ -271,7 +270,7 @@ if tab_choice == "Finance (MB/Bizerte)":
         b.metric("مصاريف", f"{dep:,.2f}")
         c.metric("الصافي", f"{(rev-dep):,.2f}")
 
-    # ======== إضافة عملية — مع ربط Revenus بعميل مُسجَّل ========
+    # ======== إضافة عملية — Revenus تربط بعميل مُسجَّل ========
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
 
@@ -630,258 +629,250 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-    # ===== ملاحظات سريعة / Tags / إضافة عميل / نقل عميل =====
-    if not df_emp.empty:
-        st.markdown("### 📝 أضف ملاحظة (سريعة)")
-        scope_df = filtered_df if not filtered_df.empty else df_emp
-        scope_df = scope_df.copy(); scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_to_update_key = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-            key="note_quick_pick"
-        )
-        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-        new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
-        if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                row_idx = find_row_by_phone(ws, tel_to_update)
-                if not row_idx: st.error("❌ الهاتف غير موجود.")
-                else:
-                    rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                    old_remark = ws.cell(row_idx, rem_col).value or ""
-                    stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                    updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
-                    ws.update_cell(row_idx, rem_col, updated)
-                    st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ: {e}")
+    # ===== 💳 الدفوعات (الموظف) — نسخة تفصل الإدارة عن الهيكل =====
+    def _to_float(x):
+        s = str(x or "").strip()
+        if not s: return 0.0
+        for ch in ["DT","TND","د","د.","دينار","€","$"]:
+            s = s.replace(ch, "")
+        s = s.replace(" ", "").replace(",", ".")
+        try:
+            return float(s)
+        except Exception:
+            return 0.0
 
-        st.markdown("### 🎨 اختر لون/Tag للعميل")
-        tel_color_key = st.selectbox(
-            "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-            key="tag_select"
-        )
-        tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
-        hex_color = st.color_picker("اختر اللون")
-        if st.button("🖌️ تلوين"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                row_idx = find_row_by_phone(ws, tel_color)
-                if not row_idx: st.error("❌ لم يتم إيجاد العميل.")
-                else:
-                    color_cell = EXPECTED_HEADERS.index("Tag") + 1
-                    ws.update_cell(row_idx, color_cell, hex_color)
-                    st.success("✅ تم التلوين"); st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ: {e}")
+    # هيدر الدفوعات — بدون Montant_Total
+    PAY_HEADERS_STD = [
+        "Tel","Formation","Prix",
+        "Montant_Admin","Montant_Structure",
+        "Date","Echeance","Reste",
+        "Branch","Note"
+    ]
 
-    st.markdown("### ➕ أضف عميل جديد")
-    with st.form("emp_add_client"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nom = st.text_input("👤 الاسم و اللقب")
-            tel_raw = st.text_input("📞 رقم الهاتف")
-            formation = st.text_input("📚 التكوين")
-            inscription = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"])
-        with col2:
-            type_contact = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
-            date_ajout_in = st.date_input("🕓 تاريخ الإضافة", value=date.today())
-            date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
-        if st.form_submit_button("📥 أضف العميل"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                tel = normalize_tn_phone(tel_raw)
-                if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
-                if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
-                insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
-                ws.append_row([nom, tel, type_contact, formation, "", fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""])
-                st.success("✅ تم إضافة العميل"); st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء الإضافة: {e}")
-
-    st.markdown("### 🔁 نقل عميل بين الموظفين")
-    if all_employes:
-        colRA, colRB = st.columns(2)
-        with colRA:
-            src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
-        with colRB:
-            dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
-        df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
-        if df_src.empty:
-            st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+    def ensure_payments_ws(sh, employee_name: str):
+        ws_name = f"{employee_name}_PAIEMENTS"
+        try:
+            ws = sh.worksheet(ws_name)
+        except Exception:
+            ws = sh.add_worksheet(title=ws_name, rows="3000", cols="20")
+            ws.update("1:1", [PAY_HEADERS_STD]); return ws
+        rows = ws.get_all_values()
+        if not rows:
+            ws.update("1:1", [PAY_HEADERS_STD])
         else:
-            pick = st.selectbox(
-                "اختر العميل للنقل",
-                [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
-                key="reassign_pick"
-            )
-            phone_pick = normalize_tn_phone(pick.split("—")[-1])
-            if st.button("🚚 نقل الآن"):
-                try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
-                    ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
-                    row_idx = find_row_by_phone(ws_src, phone_pick)
-                    if not row_idx: st.error("❌ لم يتم العثور على هذا العميل.")
-                    else:
-                        row_values = ws_src.row_values(row_idx)
-                        if len(row_values) < len(EXPECTED_HEADERS):
-                            row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
-                        row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                        ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
-                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء النقل: {e}")
+            header = [h.strip() for h in rows[0]]
+            if header != PAY_HEADERS_STD:
+                ws.update("1:1", [PAY_HEADERS_STD])
+        return ws
 
-# ===== Payments Lock (per-employee) =====
-def _get_pay_password_for(user_login: str | None) -> str:
-    try:
-        secrets = st.secrets["payments_protect"]
-    except Exception:
-        return "1234"
-    if user_login and "by_user" in secrets and user_login in secrets["by_user"]:
-        return str(secrets["by_user"][user_login])
-    return str(secrets.get("password", "1234"))
+    def _parse_date_any(x):
+        if x is None or str(x).strip() == "": return pd.NaT
+        for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%m/%d/%Y"):
+            try:
+                return pd.to_datetime(str(x), format=fmt, dayfirst=True, errors="raise")
+            except Exception:
+                pass
+        try:
+            return pd.to_datetime(str(x), dayfirst=True, errors="coerce")
+        except Exception:
+            return pd.NaT
 
-def _session_key_open_for(user_login: str) -> str:
-    return f"payments_ok::{user_login}"
+    def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
+        ws = ensure_payments_ws(sh, employee_name)
+        rows = ws.get_all_values()
+        if not rows or len(rows) == 1:
+            return pd.DataFrame(columns=PAY_HEADERS_STD)
 
-def _session_key_time_for(user_login: str) -> str:
-    return f"payments_ok_at::{user_login}"
+        df = pd.DataFrame(rows[1:], columns=rows[0])
+        df["Tel"] = df["Tel"].apply(normalize_tn_phone)
+        df = df[df["Tel"] == str(phone_norm)]
 
-def payments_unlocked(user_login: str) -> bool:
-    ok = st.session_state.get(_session_key_open_for(user_login), False)
-    ts = st.session_state.get(_session_key_time_for(user_login))
-    return bool(ok and ts and (datetime.now() - ts) <= timedelta(minutes=15))
+        for c in ["Prix","Montant_Admin","Montant_Structure","Reste"]:
+            if c in df.columns:
+                df[c] = df[c].apply(_to_float)
 
-def payments_lock_ui(user_login: str):
-    with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked(user_login)):
-        if payments_unlocked(user_login):
-            col1, col2 = st.columns([1,1])
-            with col1: st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
-            with col2:
-                if st.button("🔐 قفل الآن"):
-                    st.session_state[_session_key_open_for(user_login)] = False
-                    st.session_state[_session_key_time_for(user_login)] = None
-                    st.info("تم القفل.")
-        else:
-            pwd_cfg = _get_pay_password_for(user_login)
-            pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password", key=f"pwd_{user_login}")
-            if st.button("🔓 فتح", key=f"open_{user_login}"):
-                if pwd_try and pwd_try == pwd_cfg:
-                    st.session_state[_session_key_open_for(user_login)] = True
-                    st.session_state[_session_key_time_for(user_login)] = datetime.now()
-                    st.success("تم الفتح لمدة 15 دقيقة.")
-                else:
-                    st.error("كلمة سرّ غير صحيحة.")
+        df["Date_dt"] = df["Date"].apply(_parse_date_any) if "Date" in df.columns else pd.NaT
+        df["Echeance_dt"] = df["Echeance"].apply(_parse_date_any) if "Echeance" in df.columns else pd.NaT
 
-PAY_HEADERS_STD = ["Tel", "Formation", "Prix", "Montant", "Date", "Reste"]
+        # احسب Reste على التاريخ
+        prix = float(df["Prix"].max()) if "Prix" in df.columns and not df["Prix"].isna().all() else 0.0
+        paid_admin = float(df["Montant_Admin"].sum()) if "Montant_Admin" in df.columns else 0.0
+        paid_struct = float(df["Montant_Structure"].sum()) if "Montant_Structure" in df.columns else 0.0
+        reste_now = max(prix - (paid_admin + paid_struct), 0.0)
+        if "Reste" in df.columns and len(df) > 0:
+            df.loc[df.index[-1], "Reste"] = reste_now
 
-def _to_float(x):
-    s = str(x).strip()
-    if not s: return 0.0
-    for ch in ["DT","TND","د","د.","دينار","€","$"]:
-        s = s.replace(ch, "")
-    s = s.replace(" ", "").replace(",", ".")
-    try: return float(s)
-    except Exception: return 0.0
+        df = df.sort_values(by=["Date_dt"], ascending=True)
 
-def ensure_payments_ws(sh, employee_name: str):
-    ws_name = f"{employee_name}_PAIEMENTS"
-    try:
-        ws = sh.worksheet(ws_name)
-    except Exception:
-        ws = sh.add_worksheet(title=ws_name, rows="2000", cols="10")
-        ws.update("1:1", [PAY_HEADERS_STD]); return ws
-    rows = ws.get_all_values()
-    if not rows: ws.update("1:1", [PAY_HEADERS_STD])
-    else:
-        header = [h.strip() for h in rows[0]]
-        if header != PAY_HEADERS_STD: ws.update("1:1", [PAY_HEADERS_STD])
-    return ws
+        today_ts = pd.Timestamp(datetime.now().date())
+        df["__ALERT"] = df["Echeance_dt"].notna() & (df["Echeance_dt"] < today_ts) & (df["Reste"].fillna(0) > 0)
 
-def _read_payments_for(sh, phone_norm: str, employee_name: str) -> pd.DataFrame:
-    ws = ensure_payments_ws(sh, employee_name)
-    rows = ws.get_all_values()
-    if not rows or len(rows) == 1:
-        return pd.DataFrame(columns=PAY_HEADERS_STD)
-    data = rows[1:]
-    fixed = []
-    for r in data:
-        r = list(r or [])
-        if len(r) < len(PAY_HEADERS_STD): r += [""] * (len(PAY_HEADERS_STD) - len(r))
-        else: r = r[:len(PAY_HEADERS_STD)]
-        fixed.append(r)
-    df = pd.DataFrame(fixed, columns=PAY_HEADERS_STD)
-    df["Tel"] = df["Tel"].apply(normalize_tn_phone)
-    df = df[df["Tel"] == str(phone_norm)]
-    if not df.empty:
-        df["Prix"] = df["Prix"].apply(_to_float)
-        df["Montant"] = df["Montant"].apply(_to_float)
-        df["Reste"] = df["Reste"].apply(_to_float)
-        try: df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
-        except Exception: df["Date_dt"] = pd.NaT
-        df = df.sort_values(by=["Date_dt"], ascending=True).drop(columns=["Date_dt"], errors="ignore")
-    return df
+        return df
 
-def _append_payment(sh, employee_name: str, phone_norm: str, formation: str, prix_total: float, montant: float, dt: date):
-    ws = ensure_payments_ws(sh, employee_name)
-    existing = _read_payments_for(sh, phone_norm, employee_name)
-    sum_old = float(existing["Montant"].sum()) if not existing.empty else 0.0
-    reste = max(float(prix_total) - (sum_old + float(montant)), 0.0)
-    row = [phone_norm, str(formation or ""), f"{float(prix_total):.2f}", f"{float(montant):.2f}", fmt_date(dt), f"{reste:.2f}"]
-    ws.append_row(row)
-    return reste
+    def _append_payment(
+        sh, employee_name: str, phone_norm: str, formation: str,
+        prix_total: float, montant_admin: float, montant_structure: float,
+        dt: date, echeance: date | None, branch: str, note: str = ""
+    ):
+        ws = ensure_payments_ws(sh, employee_name)
+        existing = _read_payments_for(sh, phone_norm, employee_name)
+        sum_admin = float(existing["Montant_Admin"].sum()) if not existing.empty else 0.0
+        sum_struct = float(existing["Montant_Structure"].sum()) if not existing.empty else 0.0
+        total_now = float(montant_admin) + float(montant_structure)
+        reste = max(float(prix_total) - (sum_admin + sum_struct + total_now), 0.0)
 
-# ===== 💳 المدفوعات (الموظف) =====
-if role == "موظف" and employee:
+        row = {
+            "Tel": phone_norm,
+            "Formation": str(formation or ""),
+            "Prix": f"{float(prix_total):.2f}",
+            "Montant_Admin": f"{float(montant_admin):.2f}",
+            "Montant_Structure": f"{float(montant_structure):.2f}",
+            "Date": datetime.strptime(fmt_date(dt), "%d/%m/%Y").strftime("%d/%m/%Y"),
+            "Echeance": fmt_date(echeance) if isinstance(echeance, date) else "",
+            "Reste": f"{reste:.2f}",
+            "Branch": str(branch or ""),
+            "Note": note.strip(),
+        }
+        vals = [row.get(col, "") for col in PAY_HEADERS_STD]
+        ws.append_row(vals)
+        return reste
+
+    # ==== واجهة الدفوعات للموظّف ====
     st.markdown("## 💳 الدفوعات")
+    def _get_pay_password_for(user_login: str | None) -> str:
+        try:
+            secrets = st.secrets["payments_protect"]
+        except Exception:
+            return "1234"
+        if user_login and "by_user" in secrets and user_login in secrets["by_user"]:
+            return str(secrets["by_user"][user_login])
+        return str(secrets.get("password", "1234"))
+
+    def _session_key_open_for(user_login: str) -> str:
+        return f"payments_ok::{user_login}"
+
+    def _session_key_time_for(user_login: str) -> str:
+        return f"payments_ok_at::{user_login}"
+
+    def payments_unlocked(user_login: str) -> bool:
+        ok = st.session_state.get(_session_key_open_for(user_login), False)
+        ts = st.session_state.get(_session_key_time_for(user_login))
+        return bool(ok and ts and (datetime.now() - ts) <= timedelta(minutes=15))
+
+    def payments_lock_ui(user_login: str):
+        with st.expander("🔒 حماية المدفوعات (Password)", expanded=not payments_unlocked(user_login)):
+            if payments_unlocked(user_login):
+                col1, col2 = st.columns([1,1])
+                with col1: st.success("تم فتح قسم المدفوعات (ينتهي بعد 15 دقيقة).")
+                with col2:
+                    if st.button("🔐 قفل الآن"):
+                        st.session_state[_session_key_open_for(user_login)] = False
+                        st.session_state[_session_key_time_for(user_login)] = None
+                        st.info("تم القفل.")
+            else:
+                pwd_cfg = _get_pay_password_for(user_login)
+                pwd_try = st.text_input("أدخل كلمة السرّ لفتح قسم المدفوعات", type="password", key=f"pwd_{user_login}")
+                if st.button("🔓 فتح", key=f"open_{user_login}"):
+                    if pwd_try and pwd_try == pwd_cfg:
+                        st.session_state[_session_key_open_for(user_login)] = True
+                        st.session_state[_session_key_time_for(user_login)] = datetime.now()
+                        st.success("تم الفتح لمدة 15 دقيقة.")
+                    else:
+                        st.error("كلمة سرّ غير صحيحة.")
+
     payments_lock_ui(employee)
     if payments_unlocked(employee):
         df_emp_for_pay = df_all[df_all["__sheet_name"] == employee].copy()
         df_emp_for_pay["Téléphone_norm"] = df_emp_for_pay["Téléphone"].apply(normalize_tn_phone)
+
         pay_choices = {
-            f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+            f"{row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])} — {row.get('Formation','')}": row["Téléphone_norm"]
             for _, row in df_emp_for_pay.iterrows() if str(row["Téléphone"]).strip() != ""
         }
+
         if not pay_choices:
             st.info("لا يوجد عملاء لاختيارهم للدفوعات.")
         else:
-            pay_key = st.selectbox("اختر العميل (للـدفوعات)", list(pay_choices.keys()), key="pay_pick")
+            pay_key = st.selectbox("اختر العميل (للـدفوعات)", list(pay_choices.keys()), key="pay_pick_v2")
             pay_phone = pay_choices.get(pay_key, "")
             cur_row = df_emp_for_pay[df_emp_for_pay["Téléphone_norm"] == pay_phone].iloc[0]
             cur_formation = str(cur_row.get("Formation", ""))
+
             sh = client.open_by_key(SPREADSHEET_ID)
             df_payments = _read_payments_for(sh, pay_phone, employee)
-            if df_payments.empty: st.info("لا توجد دفوعات سابقة لهذا العميل.")
-            else: st.dataframe(df_payments, use_container_width=True)
-            with st.form("pay_add_form"):
-                colp1, colp2, colp3 = st.columns(3)
-                with colp1:
+
+            if df_payments.empty:
+                st.info("لا توجد دفوعات سابقة لهذا العميل.")
+                paid_admin = 0.0
+                paid_struct = 0.0
+                prix_max = 0.0
+            else:
+                st.dataframe(
+                    df_payments[[
+                        "Date","Echeance","Formation","Prix",
+                        "Montant_Admin","Montant_Structure",
+                        "Reste","Branch","Note","__ALERT"
+                    ]],
+                    use_container_width=True
+                )
+                paid_admin = float(df_payments["Montant_Admin"].sum())
+                paid_struct = float(df_payments["Montant_Structure"].sum())
+                prix_max = float(df_payments["Prix"].max() if "Prix" in df_payments.columns else 0.0)
+                late_count = int(df_payments["__ALERT"].sum())
+                if late_count > 0:
+                    st.warning(f"⚠️ يوجد {late_count} سطر(أسطر) بها إستحقاق فائت و رصيد متبقٍ.")
+
+            # فورم الإضافة
+            with st.form("pay_add_form_v2", border=True):
+                c1, c2, c3, c4 = st.columns(4)
+                with c1:
                     prix_total = st.number_input("💰 سعر التكوين (Prix)", min_value=0.0, step=10.0,
-                                                 value=float(df_payments["Prix"].max()) if not df_payments.empty else 0.0)
-                with colp2:
-                    montant = st.number_input("💵 المبلغ المدفوع (Montant)", min_value=0.0, step=10.0)
-                with colp3:
-                    date_pay = st.date_input("📅 تاريخ الدفع", value=date.today())
+                                                 value=prix_max, key="v2_prix")
+                with c2:
+                    montant_admin = st.number_input("🏢 مدفوع الإدارة", min_value=0.0, step=10.0, key="v2_m_admin")
+                with c3:
+                    montant_struct = st.number_input("🏫 مدفوع الهيكل", min_value=0.0, step=10.0, key="v2_m_struct")
+                with c4:
+                    date_pay = st.date_input("📅 تاريخ الدفع", value=date.today(), key="v2_date")
+
+                d1, d2, d3 = st.columns(3)
+                with d1:
+                    echeance = st.date_input("⏰ تاريخ استحقاق الباقي", value=date.today(), key="v2_due")
+                with d2:
+                    branch = st.selectbox("الفرع", ["Menzel Bourguiba","Bizerte"], key="v2_branch")
+                with d3:
+                    note = st.text_input("ملاحظة", key="v2_note")
+
+                total_now = float(montant_admin) + float(montant_struct)
+                reste_preview = max(float(prix_total) - (paid_admin + paid_struct + total_now), 0.0)
+
+                st.caption(
+                    f"مجموع الإدارة (قديمة+جديدة): **{paid_admin + float(montant_admin):.2f}** — "
+                    f"مجموع الهيكل (قديمة+جديدة): **{paid_struct + float(montant_struct):.2f}** — "
+                    f"الباقي المتوقع بعد الحفظ: **{reste_preview:.2f}**"
+                )
+
                 if st.form_submit_button("➕ أضف الدفعة"):
-                    if prix_total <= 0 or montant <= 0:
-                        st.warning("رجاءً أدخل قيماً موجبة.")
+                    if prix_total <= 0 or (montant_admin <= 0 and montant_struct <= 0):
+                        st.warning("رجاءً أدخل سعر تكوين موجب و مبلغ مدفوع (الإدارة أو الهيكل).")
                     else:
                         try:
-                            reste = _append_payment(sh, employee, pay_phone, cur_formation, prix_total, montant, date_pay)
-                            st.success(f"✅ تمت الإضافة. المتبقي الآن: {reste:.2f}"); st.cache_data.clear()
+                            reste = _append_payment(
+                                sh, employee, pay_phone, cur_formation,
+                                prix_total, montant_admin, montant_struct,
+                                date_pay, echeance, branch, note
+                            )
+                            st.success(f"✅ تمت الإضافة. المتبقي الآن: {reste:.2f}")
+                            st.cache_data.clear(); st.rerun()
                         except Exception as e:
                             st.error(f"❌ خطأ أثناء إضافة الدفعة: {e}")
     else:
         st.info("🔒 قسم المدفوعات مقفول لهذا الموظّف. أدخل كلمة السرّ لفتحه من الأعلى.")
 
-# ================== صفحة الأدمِن ==================
+# ================== صفحة الأدمِن — تقارير الدفوعات ==================
 @st.cache_data(ttl=60)
 def read_all_payments_concat(_spreadsheet_id: str, employees: tuple[str, ...]) -> pd.DataFrame:
-    """اقرأ كل الدفوعات عبر *_PAIEMENTS (بدون تمرير gspread للكاش)."""
-    PAY_HEADERS = ["Tel","Formation","Prix","Montant","Date","Reste"]
+    """اقرأ كل الدفوعات عبر *_PAIEMENTS بالهيدر الجديد + عمود Employe."""
     c = client.open_by_key(_spreadsheet_id)
     all_rows = []
     for emp in employees:
@@ -892,29 +883,37 @@ def read_all_payments_concat(_spreadsheet_id: str, employees: tuple[str, ...]) -
         try:
             rows = ws.get_all_values()
         except Exception:
-            time.sleep(0.4)
+            time.sleep(0.3); 
             try: rows = ws.get_all_values()
             except Exception: continue
-        if not rows or len(rows) == 1: continue
-        data = rows[1:]
-        fixed = []
-        for r in data:
-            r = list(r or [])
-            if len(r) < len(PAY_HEADERS): r += [""] * (len(PAY_HEADERS) - len(r))
-            else: r = r[:len(PAY_HEADERS)]
-            fixed.append(r)
-        df = pd.DataFrame(fixed, columns=PAY_HEADERS)
+        if not rows or len(rows) == 1:
+            continue
+
+        df = pd.DataFrame(rows[1:], columns=rows[0])
         df["Employe"] = emp
+
+        for col in ["Prix","Montant_Admin","Montant_Structure","Reste"]:
+            if col in df.columns: df[col] = df[col].apply(_to_float)
+
+        if "Date" in df.columns:     df["Date_dt"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+        else:                        df["Date_dt"] = pd.NaT
+        if "Echeance" in df.columns: df["Echeance_dt"] = pd.to_datetime(df["Echeance"], dayfirst=True, errors="coerce")
+        else:                        df["Echeance_dt"] = pd.NaT
+
+        if "Branch" not in df.columns: df["Branch"] = ""
         all_rows.append(df)
-        time.sleep(0.15)
+        time.sleep(0.1)
+
     if not all_rows:
-        return pd.DataFrame(columns=PAY_HEADERS + ["Employe"])
+        return pd.DataFrame(columns=PAY_HEADERS_STD + ["Employe","Date_dt","Echeance_dt","__ALERT"])
+
     big = pd.concat(all_rows, ignore_index=True)
-    big["Tel"] = big["Tel"].apply(normalize_tn_phone)
-    for ccol in ["Prix","Montant","Reste"]:
-        big[ccol] = big[ccol].apply(_to_float)
-    try: big["Date_dt"] = pd.to_datetime(big["Date"], dayfirst=True, errors="coerce")
-    except Exception: big["Date_dt"] = pd.NaT
+
+    # احسب Reste من جديد لضمان الدقة: Prix - (sum admin + sum struct) per Tel+Employe
+    # (تبسيط: نستعمل المخزّن ونكمّلو بالتجميع للعرض)
+    today = pd.Timestamp(datetime.now().date())
+    big["__ALERT"] = big["Echeance_dt"].notna() & (big["Echeance_dt"] < today) & (big["Reste"].fillna(0) > 0)
+
     return big
 
 if role == "أدمن":
@@ -922,7 +921,7 @@ if role == "أدمن":
     if not admin_unlocked():
         st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح الصفحة.")
     else:
-        # ===== إدارة الموظفين =====
+        # ===== إدارة الموظفين (اختياري: حافظ على بلوكاتك المعتادة إن لزم) =====
         st.markdown("### 👨‍💼 إدارة الموظفين")
         colA, colB, colC = st.columns(3)
 
@@ -977,25 +976,28 @@ if role == "أدمن":
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
-        # ===== كل الدفوعات + فلاتر =====
+        # ===== تقارير الدفوعات =====
         st.markdown("---")
-        st.markdown("### 💳 جميع الدفوعات (كل الموظفين) + فلاتر")
+        st.markdown("### 💳 جميع الدفوعات (كل الموظفين) + تقارير الفروع")
+
         emps_tuple = tuple(sorted(set(df_all["__sheet_name"].dropna().astype(str))))
         try:
             df_allp = read_all_payments_concat(SPREADSHEET_ID, emps_tuple)
         except Exception as e:
             st.error(f"تعذّر قراءة الدفوعات: {e}")
-            df_allp = pd.DataFrame(columns=PAY_HEADERS_STD + ["Employe"])
+            df_allp = pd.DataFrame(columns=["Employe","Date_dt","Echeance_dt","__ALERT"] + PAY_HEADERS_STD)
 
         if df_allp.empty:
             st.info("لا توجد أي دفوعات بعد.")
         else:
-            colf1, colf2, colf3 = st.columns([1,1,2])
+            colf1, colf2, colf3, colf4 = st.columns([1,1,1,2])
             with colf1:
-                emps_pick = st.multiselect("🔎 الموظفون", sorted(df_allp["Employe"].unique().tolist()))
+                branches_pick = st.multiselect("🏢 الفروع", sorted([b for b in df_allp["Branch"].dropna().unique().tolist() if str(b).strip()]))
             with colf2:
-                forms_pick = st.multiselect("📚 التكوين", sorted([x for x in df_allp["Formation"].unique().tolist() if str(x).strip()]))
+                emps_pick = st.multiselect("👨‍💼 الموظفون", sorted(df_allp["Employe"].unique().tolist()))
             with colf3:
+                late_only = st.checkbox("⏰ فقط المتأخرة (Reste>0 & Echéance فائتة)")
+            with colf4:
                 min_d = pd.to_datetime(df_allp["Date_dt"]).min()
                 max_d = pd.to_datetime(df_allp["Date_dt"]).max()
                 if pd.isna(min_d): min_d = date.today()
@@ -1003,25 +1005,45 @@ if role == "أدمن":
                 d_from, d_to = st.date_input("📅 المدة", [min_d.date(), max_d.date()])
 
             filt = df_allp.copy()
-            if emps_pick:  filt = filt[filt["Employe"].isin(emps_pick)]
-            if forms_pick: filt = filt[filt["Formation"].isin(forms_pick)]
+            if branches_pick: filt = filt[filt["Branch"].isin(branches_pick)]
+            if emps_pick:     filt = filt[filt["Employe"].isin(emps_pick)]
             if isinstance(d_from, date) and isinstance(d_to, date):
                 filt = filt[(filt["Date_dt"] >= pd.Timestamp(d_from)) & (filt["Date_dt"] <= pd.Timestamp(d_to))]
+            if late_only:
+                filt = filt[filt["__ALERT"] == True]
 
             if filt.empty:
                 st.info("لا نتائج بالفلتر الحالي.")
             else:
-                col_sort = st.selectbox("رتّب حسب", ["Date_dt","Employe","Tel","Formation","Prix","Montant","Reste"], index=0)
-                asc = st.checkbox("تصاعدي؟", value=True)
-                df_show = filt.sort_values(by=[col_sort], ascending=asc)
-                df_show = df_show[["Employe","Tel","Formation","Prix","Montant","Reste","Date"]]
-                st.dataframe(df_show, use_container_width=True)
+                base_cols = ["Date","Echeance","Branch","Employe","Tel","Formation","Prix",
+                             "Montant_Admin","Montant_Structure","Reste","Note","__ALERT"]
+                base_cols = [c for c in base_cols if c in filt.columns]
+                st.dataframe(filt[base_cols].sort_values("Date_dt"), use_container_width=True)
 
-                st.markdown("#### 📈 إحصائيات")
-                total_paid = float(filt["Montant"].sum())
-                total_reste = float(filt["Reste"].sum())
-                c1, c2 = st.columns(2)
-                with c1: st.metric("إجمالي المدفوع", f"{total_paid:,.2f}")
-                with c2: st.metric("إجمالي المتبقي", f"{total_reste:,.2f}")
+                st.markdown("#### 📈 إحصائيات (مفصولة)")
+                k1,k2,k3,k4 = st.columns(4)
+                total_admin  = float(filt["Montant_Admin"].sum()) if "Montant_Admin" in filt.columns else 0.0
+                total_struct = float(filt["Montant_Structure"].sum()) if "Montant_Structure" in filt.columns else 0.0
+                reste_sum    = float(filt["Reste"].sum()) if "Reste" in filt.columns else 0.0
+                late_cnt     = int(filt["__ALERT"].sum()) if "__ALERT" in filt.columns else 0
+                with k1: st.metric("Admin (مجموعة)", f"{total_admin:,.2f}")
+                with k2: st.metric("Structure (مجموعة)", f"{total_struct:,.2f}")
+                with k3: st.metric("Reste الإجمالي", f"{reste_sum:,.2f}")
+                with k4: st.metric("إنذارات متأخرة", f"{late_cnt}")
+
+                st.markdown("#### 🔎 تجميعات حسب الفرع والموظف")
+                g1,g2 = st.columns(2)
+                if "Branch" in filt.columns:
+                    grp_branch = (
+                        filt.groupby("Branch", dropna=False)[["Montant_Admin","Montant_Structure","Reste"]]
+                        .sum().reset_index()
+                    )
+                    with g1: st.dataframe(grp_branch, use_container_width=True)
+                if "Employe" in filt.columns:
+                    grp_emp = (
+                        filt.groupby("Employe", dropna=False)[["Montant_Admin","Montant_Structure","Reste"]]
+                        .sum().reset_index()
+                    )
+                    with g2: st.dataframe(grp_emp, use_container_width=True)
 
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
