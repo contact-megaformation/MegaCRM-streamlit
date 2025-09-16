@@ -108,33 +108,61 @@ def _to_num(s):
     return pd.to_numeric(str(s).replace(" ", "").replace(",", "."), errors="coerce")
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
-    cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
+    """
+    يقرأ ورقة المداخيل/المصاريف ويحوّل الأعمدة لأنواع مناسبة.
+    يصلّح مشكلة المقارنة بين تواريخ مختلفة الأنواع عبر توحيدها إلى pandas.Timestamp.
+    """
+    cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
     values = ws.get_all_values()
     if not values:
         return pd.DataFrame(columns=cols)
+
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
-    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
+    # --- Dates to Timestamp ---
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+    if kind == "Revenus" and "Echeance" in df.columns:
+        df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
 
-    if kind=="Revenus":
-        for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
-            if c in df.columns: df[c] = df[c].apply(_to_num)
+    # --- Numbers ---
+    if kind == "Revenus":
+        for c in ["Prix", "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total", "Reste"]:
+            if c in df.columns:
+                df[c] = (
+                    df[c]
+                    .astype(str)
+                    .str.replace(" ", "", regex=False)
+                    .str.replace(",", ".", regex=False)
+                )
+                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
     else:
-        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
+        if "Montant" in df.columns:
+            df["Montant"] = (
+                df["Montant"]
+                .astype(str)
+                .str.replace(" ", "", regex=False)
+                .str.replace(",", ".", regex=False)
+            )
+            df["Montant"] = pd.to_numeric(df["Montant"], errors="coerce").fillna(0.0)
 
-    if kind=="Revenus":
-        today = datetime.now().date()
+    # --- Alerts (only Revenus) ---
+    if kind == "Revenus":
         df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
-            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
-            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
+            # توحيد اليوم إلى Timestamp مُطبّع (منتصف الليل) للمقارنة
+            today_ts = pd.Timestamp.now().normalize()
+            ech = pd.to_datetime(df["Echeance"], errors="coerce")  # يضمن datetime64[ns]
+            reste = pd.to_numeric(df["Reste"], errors="coerce").fillna(0.0)
+
+            late_mask = ech.notna() & (ech < today_ts) & (reste > 0)
+            today_mask = ech.notna() & (ech.dt.normalize() == today_ts) & (reste > 0)
+
             df.loc[late_mask, "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
-
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
