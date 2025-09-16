@@ -1,9 +1,5 @@
 # MegaCRM_Streamlit_App.py — Admin + Employees + Dashboard + Search + Edit + Notes + Tags + Reassign + Payments
-# Fixes:
-# - st.rerun() بدل experimental_rerun
-# - Payments lock per-session & resets when switching employee
-# - Hide *_PAIEMENTS sheets from employee list
-# - Admin: add employee, add client, delete employee, payments with filters
+# + Finance (MB/Bizerte) tab with registered-clients picker for Revenus
 
 import json, time
 import streamlit as st
@@ -111,7 +107,7 @@ def fin_append_row(client, sheet_id: str, title: str, row: dict):
     vals = [str(row.get(col, "")) for col in header]
     ws.append_row(vals)
 
-# ===== Helpers =====
+# ===== Helpers (CRM) =====
 def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
@@ -152,7 +148,7 @@ def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription", "")).strip().lower()
     return ['background-color: #d6f5e8' if insc in ("inscrit","oui") else '' for _ in row.index]
 
-# ===== تحميل البيانات + إخفاء أوراق الدفوعات =====
+# ===== تحميل بيانات CRM + إخفاء أوراق الدفوعات =====
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = client.open_by_key(SPREADSHEET_ID)
@@ -275,24 +271,72 @@ if tab_choice == "Finance (MB/Bizerte)":
         b.metric("مصاريف", f"{dep:,.2f}")
         c.metric("الصافي", f"{(rev-dep):,.2f}")
 
+    # ======== إضافة عملية — مع ربط Revenus بعميل مُسجَّل ========
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
+
+    selected_client_info = None
+    client_default_lib = ""
+    client_default_emp = (st.session_state.get("employee","") or "")
+
+    if kind == "Revenus":
+        st.markdown("#### 👤 اربط الدفعة بعميل مُسجَّل")
+        reg_df = df_all.copy()
+        reg_df["Inscription_norm"] = reg_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
+        reg_df = reg_df[reg_df["Inscription_norm"].isin(["oui","inscrit"])]
+
+        if role == "موظف" and employee:
+            reg_df = reg_df[reg_df["__sheet_name"] == employee]
+
+        if reg_df.empty:
+            st.info("لا يوجد عملاء مُسجَّلين ضمن هذا النطاق.")
+        else:
+            def _opt(row):
+                phone = format_display_phone(row.get("Téléphone",""))
+                return f"{row.get('Nom & Prénom','')} — {phone} — {row.get('Formation','')}  [{row.get('__sheet_name','')}]"
+            options = [_opt(r) for _, r in reg_df.iterrows()]
+            pick = st.selectbox("اختر عميلًا مُسجَّلًا (اختياري)", ["— بدون اختيار —"] + options, key="fin_client_pick")
+
+            if pick and pick != "— بدون اختيار —":
+                idx = options.index(pick)
+                row = reg_df.iloc[idx]
+                selected_client_info = {
+                    "name": str(row.get("Nom & Prénom","")).strip(),
+                    "tel":  str(row.get("Téléphone","")).strip(),
+                    "formation": str(row.get("Formation","")).strip(),
+                    "emp": str(row.get("__sheet_name","")).strip()
+                }
+                client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
+                if not client_default_emp:
+                    client_default_emp = selected_client_info["emp"]
+                st.caption(f"سيتم اقتراح: **Libellé =** {client_default_lib}  —  **Employé =** {client_default_emp}")
+
     with st.form("fin_add_row"):
         d1, d2, d3 = st.columns(3)
         date_val = d1.date_input("Date", value=datetime.today(), key="fin_date")
-        libelle  = d2.text_input("Libellé", "", key="fin_lib")
+
+        libelle_init = client_default_lib if client_default_lib else ""
+        libelle  = d2.text_input("Libellé", libelle_init, key="fin_lib")
+
         montant  = d3.number_input("Montant", min_value=0.0, step=1.0, format="%.2f", key="fin_montant")
+
         e1, e2, e3 = st.columns(3)
         mode      = e1.selectbox("Mode", ["Espèces","Virement","Carte","Autre"], key="fin_mode")
-        employe   = e2.text_input("Employé", value=(st.session_state.get("employee","") or ""), key="fin_emp")
+        employe_init = client_default_emp if client_default_emp else (st.session_state.get("employee","") or "")
+        employe   = e2.text_input("Employé", value=employe_init, key="fin_emp")
         categorie = e3.text_input("Catégorie", value=("Vente" if kind=="Revenus" else "Achat"), key="fin_cat")
-        note = st.text_area("Note", "", key="fin_note")
+
+        note_default = ""
+        if selected_client_info:
+            note_default = f"Client: {selected_client_info['name']} / {format_display_phone(selected_client_info['tel'])} / {selected_client_info['formation']}"
+        note = st.text_area("Note", note_default, key="fin_note")
+
         if st.form_submit_button("✅ حفظ العملية"):
             if not libelle.strip():
                 st.error("Libellé مطلوب.")
             elif montant <= 0:
                 st.error("المبلغ لازم > 0.")
-            elif current_role == "موظف" and not employe.strip():
+            elif role == "موظف" and not employe.strip():
                 st.error("اسم الموظّف مطلوب.")
             else:
                 fin_append_row(
@@ -310,7 +354,7 @@ if tab_choice == "Finance (MB/Bizerte)":
                 st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
     st.stop()
 
-# ===== أعمدة مشتقّة =====
+# ===== أعمدة مشتقّة (CRM) =====
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
     df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
@@ -393,6 +437,7 @@ else:
     with c3: st.metric("✅ المسجّلون اليوم", f"{registered_today}")
     with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+
 # ===== إحصائيات مفصّلة: حسب الموظّف =====
 df_stats = df_all.copy()
 df_stats["Inscription_norm"] = df_stats["Inscription"].fillna("").astype(str).str.strip().str.lower()
@@ -426,7 +471,6 @@ grp_base["% تسجيل"] = (
     (grp_base["Inscrits"] / grp_base["Clients"]).replace([float("inf"), float("nan")], 0) * 100
 ).round(2)
 
-# ترتيب: الأكثر تنبيهات ثم الأكثر عملاء
 grp_base = grp_base.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
 
 st.markdown("#### حسب الموظّف")
@@ -616,7 +660,6 @@ if role == "موظف" and employee:
         st.markdown("### 🎨 اختر لون/Tag للعميل")
         tel_color_key = st.selectbox(
             "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Télé téléphone']))}" for _, r in scope_df.iterrows()] if "Télé téléphone" in scope_df.columns else
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
             key="tag_select"
         )
