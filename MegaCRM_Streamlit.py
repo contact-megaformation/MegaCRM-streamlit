@@ -52,6 +52,65 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
+# ===== Finance (MB/Bizerte) — Helpers =====
+FIN_COLUMNS = ["Date", "Libellé", "Montant", "Mode", "Employé", "Catégorie", "Note"]
+FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
+
+def _branch_passwords():
+    try:
+        b = st.secrets["branch_passwords"]
+        return {"Menzel Bourguiba": str(b.get("MB", "MB_2025!")), "Bizerte": str(b.get("BZ", "BZ_2025!"))}
+    except Exception:
+        return {"Menzel Bourguiba": "MB_2025!", "Bizerte": "BZ_2025!"}
+
+def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
+    sh = client.open_by_key(sheet_id)
+    try:
+        ws = sh.worksheet(title)
+    except Exception:
+        ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
+        ws.update("1:1", [columns])
+        return ws
+    rows = ws.get_all_values()
+    if not rows:
+        ws.update("1:1", [columns])
+    else:
+        header = rows[0]
+        if not header or header[:len(columns)] != columns:
+            ws.update("1:1", [columns])
+    return ws
+
+def fin_month_title(mois: str, kind: str, branch: str):
+    prefix = "Revenue " if kind == "Revenus" else "Dépense "
+    short = "MB" if "Menzel" in branch else "BZ"
+    return f"{prefix}{mois} ({short})"
+
+def fin_read_df(client, sheet_id: str, title: str) -> pd.DataFrame:
+    ws = fin_ensure_ws(client, sheet_id, title, FIN_COLUMNS)
+    values = ws.get_all_values()
+    if not values:
+        return pd.DataFrame(columns=FIN_COLUMNS)
+    df = pd.DataFrame(values[1:], columns=values[0])
+    if "Montant" in df.columns:
+        df["Montant"] = (
+            df["Montant"].astype(str).str.replace(",", ".", regex=False).str.replace(" ", "", regex=False)
+            .apply(lambda x: pd.to_numeric(x, errors="coerce"))
+        )
+    if "Date" in df.columns:
+        def _p(x):
+            for fmt in ("%d/%m/%Y","%Y-%m-%d","%d-%m-%Y","%m/%d/%Y"):
+                try: return datetime.strptime(str(x), fmt).date()
+                except: pass
+            return pd.NaT
+        df["Date"] = df["Date"].apply(_p)
+    return df
+
+def fin_append_row(client, sheet_id: str, title: str, row: dict):
+    ws = fin_ensure_ws(client, sheet_id, title, FIN_COLUMNS)
+    header = ws.row_values(1)
+    vals = [str(row.get(col, "")) for col in header]
+    ws.append_row(vals)
+
 # ===== Helpers =====
 def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
@@ -139,6 +198,118 @@ df_all, all_employes = load_all_data()
 df_emp = pd.DataFrame()
 filtered_df = pd.DataFrame()
 
+# ===== Sidebar =====
+try:
+    st.sidebar.image(Image.open("logo.png"), use_container_width=True)
+except Exception:
+    pass
+
+role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
+tab_choice = st.sidebar.selectbox("📑 التبويب", ["CRM", "Finance (MB/Bizerte)"], index=0)
+employee = None
+if role == "موظف":
+    employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if all_employes else None
+
+# ===== Finance (MB/Bizerte) Tab =====
+if tab_choice == "Finance (MB/Bizerte)":
+    st.title("💸 المالية — مداخيل/مصاريف (منزل بورقيبة & بنزرت)")
+
+    with st.sidebar:
+        st.markdown("---")
+        st.subheader("🔧 إعدادات المالية")
+        branch = st.selectbox("الفرع", ["Menzel Bourguiba", "Bizerte"], key="fin_branch")
+        kind   = st.radio("النوع", ["Revenus","Dépenses"], horizontal=True, key="fin_kind")
+        mois   = st.selectbox("الشهر", FIN_MONTHS_FR, index=datetime.now().month-1, key="fin_month")
+        BRANCH_PASSWORDS = _branch_passwords()
+        key_pw = f"finance_pw_ok::{branch}"
+        if key_pw not in st.session_state: st.session_state[key_pw] = False
+        if not st.session_state[key_pw]:
+            pw_try = st.text_input("كلمة سرّ الفرع", type="password", key=f"fin_pw_{branch}")
+            if st.button("دخول الفرع", key=f"fin_enter_{branch}"):
+                if pw_try and pw_try == BRANCH_PASSWORDS.get(branch, ""):
+                    st.session_state[key_pw] = True
+                    st.success("تم الدخول ✅")
+                else:
+                    st.error("كلمة سرّ غير صحيحة ❌")
+
+    if not st.session_state.get(f"finance_pw_ok::{branch}", False):
+        st.info("⬅️ أدخل كلمة السرّ من اليسار للمتابعة.")
+        st.stop()
+
+    fin_title = fin_month_title(mois, kind, branch)
+    current_role = role
+    current_employee = st.session_state.get("employee", "")
+
+    df_fin = fin_read_df(client, SPREADSHEET_ID, fin_title)
+    df_view = df_fin.copy()
+    if current_role == "موظف" and current_employee.strip() and "Employé" in df_view.columns:
+        df_view = df_view[df_view["Employé"].fillna("").str.strip().str.lower() == current_employee.strip().lower()]
+
+    with st.expander("🔎 فلاتر"):
+        c1, c2, c3 = st.columns(3)
+        date_from = c1.date_input("من تاريخ", value=None, key="fin_from")
+        date_to   = c2.date_input("إلى تاريخ", value=None, key="fin_to")
+        search    = c3.text_input("بحث (Libellé/Catégorie/Mode/Note)", key="fin_search")
+        if "Date" in df_view.columns:
+            if date_from: df_view = df_view[df_view["Date"] >= pd.to_datetime(date_from)]
+            if date_to:   df_view = df_view[df_view["Date"] <= pd.to_datetime(date_to)]
+        if search:
+            m = pd.Series([False]*len(df_view))
+            for col in [c for c in ["Libellé","Catégorie","Mode","Employé","Note"] if c in df_view.columns]:
+                m |= df_view[col].fillna("").str.contains(search, case=False, na=False)
+            df_view = df_view[m]
+
+    st.subheader(f"📄 {fin_title}")
+    st.dataframe(df_view if not df_view.empty else pd.DataFrame(columns=FIN_COLUMNS), use_container_width=True)
+
+    total = df_view["Montant"].sum() if ("Montant" in df_view.columns and not df_view.empty) else 0.0
+    st.metric("إجمالي المبلغ", f"{total:,.2f}")
+
+    with st.expander("📊 ملخّص الفرع للشهر"):
+        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch))
+        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch))
+        rev = rev_df["Montant"].sum() if "Montant" in rev_df.columns else 0
+        dep = dep_df["Montant"].sum() if "Montant" in dep_df.columns else 0
+        a,b,c = st.columns(3)
+        a.metric("مداخيل", f"{rev:,.2f}")
+        b.metric("مصاريف", f"{dep:,.2f}")
+        c.metric("الصافي", f"{(rev-dep):,.2f}")
+
+    st.markdown("---")
+    st.markdown("### ➕ إضافة عملية جديدة")
+    with st.form("fin_add_row"):
+        d1, d2, d3 = st.columns(3)
+        date_val = d1.date_input("Date", value=datetime.today(), key="fin_date")
+        libelle  = d2.text_input("Libellé", "", key="fin_lib")
+        montant  = d3.number_input("Montant", min_value=0.0, step=1.0, format="%.2f", key="fin_montant")
+        e1, e2, e3 = st.columns(3)
+        mode      = e1.selectbox("Mode", ["Espèces","Virement","Carte","Autre"], key="fin_mode")
+        employe   = e2.text_input("Employé", value=(st.session_state.get("employee","") or ""), key="fin_emp")
+        categorie = e3.text_input("Catégorie", value=("Vente" if kind=="Revenus" else "Achat"), key="fin_cat")
+        note = st.text_area("Note", "", key="fin_note")
+        if st.form_submit_button("✅ حفظ العملية"):
+            if not libelle.strip():
+                st.error("Libellé مطلوب.")
+            elif montant <= 0:
+                st.error("المبلغ لازم > 0.")
+            elif current_role == "موظف" and not employe.strip():
+                st.error("اسم الموظّف مطلوب.")
+            else:
+                fin_append_row(
+                    client, SPREADSHEET_ID, fin_title,
+                    {
+                        "Date": date_val.strftime("%d/%m/%Y"),
+                        "Libellé": libelle.strip(),
+                        "Montant": f"{montant:.2f}",
+                        "Mode": mode,
+                        "Employé": employe.strip(),
+                        "Catégorie": categorie.strip(),
+                        "Note": note.strip(),
+                    }
+                )
+                st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
+    st.stop()
+
 # ===== أعمدة مشتقّة =====
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
@@ -167,17 +338,6 @@ else:
     df_all["Mois"] = ""
     df_all["Téléphone_norm"] = ""
     ALL_PHONES = set()
-
-# ===== Sidebar =====
-try:
-    st.sidebar.image(Image.open("logo.png"), use_container_width=True)
-except Exception:
-    pass
-
-role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
-employee = None
-if role == "موظف":
-    employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if all_employes else None
 
 # ===== Admin lock =====
 def admin_unlocked() -> bool:
@@ -456,6 +616,7 @@ if role == "موظف" and employee:
         st.markdown("### 🎨 اختر لون/Tag للعميل")
         tel_color_key = st.selectbox(
             "اختر العميل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Télé téléphone']))}" for _, r in scope_df.iterrows()] if "Télé téléphone" in scope_df.columns else
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
             key="tag_select"
         )
