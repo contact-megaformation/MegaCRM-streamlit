@@ -6,11 +6,10 @@
 #     Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل) + Montant_Total=(Admin+Structure)
 #              + Echeance + Reste (على أساس Admin+Structure فقط) + Alert تلقائي
 #     Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
-# - ملخّص شهري تفصيلي:
-#     Admin:    Income_Admin = Σ(Montant_Admin)        / Expense_Admin = Σ(Dépenses[Caisse_Admin])        / Reste_Admin = Income_Admin - Expense_Admin
-#     Structure:Income_Structure = Σ(Montant_Structure)/ Expense_Structure = Σ(Dépenses[Caisse_Structure]) / Reste_Structure = Income_Structure - Expense_Structure
-#     Inscription: Income_Inscr = Σ(Montant_PreInscription) / Expense_Inscr = Σ(Dépenses[Caisse_Inscription]) / Reste_Inscr = Income_Inscr - Expense_Inscr
+# - ملخّص شهري تفصيلي (لكل صنف): مداخيل / مصاريف / Reste
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
+# - ✅ المداخيل محمية بباسورد الموظّف (ما عادش branch_passwords)
+# - ✅ زرّ WhatsApp في واجهة الموظّفين
 
 import json, time
 import streamlit as st
@@ -70,13 +69,6 @@ FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé"
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
 # ---------------- Finance helpers ----------------
-def _branch_passwords():
-    try:
-        b = st.secrets["branch_passwords"]
-        return {"Menzel Bourguiba": str(b.get("MB", "MB_2025!")), "Bizerte": str(b.get("BZ", "BZ_2025!"))}
-    except Exception:
-        return {"Menzel Bourguiba": "MB_2025!", "Bizerte": "BZ_2025!"}
-
 def fin_month_title(mois: str, kind: str, branch: str):
     prefix = "Revenue " if kind == "Revenus" else "Dépense "
     short = "MB" if "Menzel" in branch else "BZ"
@@ -108,61 +100,33 @@ def _to_num(s):
     return pd.to_numeric(str(s).replace(" ", "").replace(",", "."), errors="coerce")
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
-    """
-    يقرأ ورقة المداخيل/المصاريف ويحوّل الأعمدة لأنواع مناسبة.
-    يصلّح مشكلة المقارنة بين تواريخ مختلفة الأنواع عبر توحيدها إلى pandas.Timestamp.
-    """
-    cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
+    cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
     values = ws.get_all_values()
     if not values:
         return pd.DataFrame(columns=cols)
-
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    # --- Dates to Timestamp ---
-    if "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
-    if kind == "Revenus" and "Echeance" in df.columns:
-        df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
+    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
+    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
 
-    # --- Numbers ---
-    if kind == "Revenus":
-        for c in ["Prix", "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total", "Reste"]:
-            if c in df.columns:
-                df[c] = (
-                    df[c]
-                    .astype(str)
-                    .str.replace(" ", "", regex=False)
-                    .str.replace(",", ".", regex=False)
-                )
-                df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0.0)
+    if kind=="Revenus":
+        for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
+            if c in df.columns: df[c] = df[c].apply(_to_num)
     else:
-        if "Montant" in df.columns:
-            df["Montant"] = (
-                df["Montant"]
-                .astype(str)
-                .str.replace(" ", "", regex=False)
-                .str.replace(",", ".", regex=False)
-            )
-            df["Montant"] = pd.to_numeric(df["Montant"], errors="coerce").fillna(0.0)
+        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
 
-    # --- Alerts (only Revenus) ---
-    if kind == "Revenus":
+    if kind=="Revenus":
+        today = datetime.now().date()
         df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
-            # توحيد اليوم إلى Timestamp مُطبّع (منتصف الليل) للمقارنة
-            today_ts = pd.Timestamp.now().normalize()
-            ech = pd.to_datetime(df["Echeance"], errors="coerce")  # يضمن datetime64[ns]
-            reste = pd.to_numeric(df["Reste"], errors="coerce").fillna(0.0)
-
-            late_mask = ech.notna() & (ech < today_ts) & (reste > 0)
-            today_mask = ech.notna() & (ech.dt.normalize() == today_ts) & (reste > 0)
-
+            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
+            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
             df.loc[late_mask, "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
+
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
     ws = fin_ensure_ws(client, sheet_id, title, cols)
@@ -181,7 +145,7 @@ def normalize_tn_phone(s: str) -> str:
     return digits
 
 def format_display_phone(s: str) -> str:
-    d = "".join(ch for ch in str(s) if ch.isdigit())
+    d = "".join(ch for ch in str(s).strip() if ch.isdigit())
     return f"+{d}" if d else ""
 
 def color_tag(val):
@@ -287,9 +251,47 @@ employee = None
 if role == "موظف":
     employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if all_employes else None
 
+# ---------------- Access guards for Finance ----------------
+def admin_unlocked() -> bool:
+    ok = st.session_state.get("admin_ok", False)
+    ts = st.session_state.get("admin_ok_at", None)
+    return bool(ok and ts and (datetime.now() - ts) <= timedelta(minutes=30))
+
+def admin_lock_ui():
+    with st.sidebar.expander("🔐 إدارة (Admin)", expanded=(role=="أدمن" and not admin_unlocked())):
+        if admin_unlocked():
+            if st.button("قفل صفحة الأدمِن"):
+                st.session_state["admin_ok"] = False
+                st.session_state["admin_ok_at"] = None
+                st.rerun()
+        else:
+            admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password", key="admin_pwd_inp")
+            if st.button("فتح صفحة الأدمِن"):
+                conf = str(st.secrets.get("admin_password", "admin123"))
+                if admin_pwd and admin_pwd == conf:
+                    st.session_state["admin_ok"] = True
+                    st.session_state["admin_ok_at"] = datetime.now()
+                    st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
+                else:
+                    st.error("كلمة سرّ غير صحيحة.")
+
+if role == "أدمن":
+    admin_lock_ui()
+
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
+
+    # 🔒 الحماية: الموظف يفتح بورقته أو الأدمِن يفتح بلوحته
+    if role == "موظف":
+        if not employee:
+            st.info("⬅️ إختر الموظّف من اليسار."); st.stop()
+        _emp_lock_ui(employee)
+        if not _emp_unlocked(employee):
+            st.info("🔒 أدخل كلمة سرّ الموظّف في أعلى هذا القسم لفتح المداخيل."); st.stop()
+    elif role == "أدمن":
+        if not admin_unlocked():
+            st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح المداخيل."); st.stop()
 
     with st.sidebar:
         st.markdown("---")
@@ -298,20 +300,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         kind_ar = st.radio("النوع", ["مداخيل","مصاريف"], horizontal=True, key="fin_kind_ar")
         kind = "Revenus" if kind_ar == "مداخيل" else "Dépenses"
         mois   = st.selectbox("الشهر", FIN_MONTHS_FR, index=datetime.now().month-1, key="fin_month")
-
-        BRANCH_PASSWORDS = _branch_passwords()
-        key_pw = f"finance_pw_ok::{branch}"
-        if key_pw not in st.session_state: st.session_state[key_pw] = False
-        if not st.session_state[key_pw]:
-            pw_try = st.text_input("كلمة سرّ الفرع", type="password", key=f"fin_pw_{branch}")
-            if st.button("دخول الفرع", key=f"fin_enter_{branch}"):
-                if pw_try and pw_try == BRANCH_PASSWORDS.get(branch, ""):
-                    st.session_state[key_pw] = True; st.success("تم الدخول ✅")
-                else:
-                    st.error("كلمة سرّ غير صحيحة ❌")
-
-    if not st.session_state.get(f"finance_pw_ok::{branch}", False):
-        st.info("⬅️ أدخل كلمة السرّ من اليسار للمتابعة."); st.stop()
 
     fin_title = fin_month_title(mois, kind, branch)
 
@@ -353,7 +341,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
         sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
         sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
-        # (اختياري) مجموع Admin+Structure
         sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
         sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
 
@@ -401,7 +388,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     selected_client_info = None
     client_default_lib = ""
-    client_default_emp = employee or ""
+    client_default_emp = (employee or "") if role == "موظف" else ""
 
     # (اختياري) اقتراح تلقائي من عميل مُسجّل للمداخيل
     if kind == "Revenus":
@@ -432,7 +419,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         d1, d2, d3 = st.columns(3)
         date_val = d1.date_input("Date", value=datetime.today())
         libelle  = d2.text_input("Libellé", value=(client_default_lib if kind=="Revenus" else ""))
-        employe  = d3.text_input("Employé", value=(client_default_emp if kind=="Revenus" else (employee or "")))
+        employe  = d3.text_input("Employé", value=client_default_emp)
 
         if kind == "Revenus":
             r1, r2, r3 = st.columns(3)
@@ -523,7 +510,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                     st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
     st.stop()
 
-# ---------------- CRM: مشتقّات وعرض ----------------
+# ---------------- CRM Derivatives ----------------
 df_all = df_all.copy()
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
@@ -545,32 +532,6 @@ if not df_all.empty:
     df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
     df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
-
-# ---------------- Admin lock ----------------
-def admin_unlocked() -> bool:
-    ok = st.session_state.get("admin_ok", False)
-    ts = st.session_state.get("admin_ok_at", None)
-    return bool(ok and ts and (datetime.now() - ts) <= timedelta(minutes=30))
-
-def admin_lock_ui():
-    with st.sidebar.expander("🔐 إدارة (Admin)", expanded=(role=="أدمن" and not admin_unlocked())):
-        if admin_unlocked():
-            if st.button("قفل صفحة الأدمِن"):
-                st.session_state["admin_ok"] = False
-                st.session_state["admin_ok_at"] = None
-                st.rerun()
-        else:
-            admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password", key="admin_pwd_inp")
-            if st.button("فتح صفحة الأدمِن"):
-                conf = str(st.secrets.get("admin_password", "admin123"))
-                if admin_pwd and admin_pwd == conf:
-                    st.session_state["admin_ok"] = True
-                    st.session_state["admin_ok_at"] = datetime.now()
-                    st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
-                else:
-                    st.error("كلمة سرّ غير صحيحة.")
-
-if role == "أدمن": admin_lock_ui()
 
 # ---------------- Dashboard ----------------
 st.subheader("لوحة إحصائيات سريعة")
@@ -680,10 +641,23 @@ if role == "موظف" and employee:
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
     def render_table(df_disp: pd.DataFrame):
-        if df_disp.empty: st.info("لا توجد بيانات."); return
+        if df_disp.empty:
+            st.info("لا توجد بيانات."); return
         _df = df_disp.copy()
         _df["Alerte"] = _df.get("Alerte_view", "")
+        # زرّ واتساب: نضيف عمود فيه رابط wa.me
+        def _wa_link(row):
+            tel = normalize_tn_phone(row.get("Téléphone",""))
+            if not tel: return ""
+            name = str(row.get("Nom & Prénom","")).strip().replace(" ", "%20")
+            txt = f"Bonjour%20{name}"
+            return f"https://wa.me/{tel}?text={txt}"
+        _df["WhatsApp"] = _wa_link  # placeholder to apply on rows
+        _df["WhatsApp"] = _df.apply(lambda r: _wa_link(r), axis=1)
+
         display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
+        # نخلي رابط الواتساب ظاهر كعمود
+        display_cols = display_cols + ["WhatsApp"]
         styled = (
             _df[display_cols]
             .style.apply(highlight_inscrit_row, axis=1)
@@ -691,6 +665,7 @@ if role == "موظف" and employee:
             .applymap(color_tag, subset=["Tag"])
         )
         st.dataframe(styled, use_container_width=True)
+        st.caption("📲 عمود WhatsApp يحتوي رابط مباشر لفتح المحادثة.")
 
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
@@ -700,7 +675,7 @@ if role == "موظف" and employee:
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
         st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
 
-    # Edit client
+    # -------- Edit client --------
     if not df_emp.empty:
         st.markdown("### ✏️ تعديل بيانات عميل")
         df_emp_edit = df_emp.copy()
@@ -777,8 +752,8 @@ if role == "موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-    # Quick notes & Tag
-    if not df_emp.empty:
+    # -------- Quick notes & tag --------
+    if role == "موظف" and employee and not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة (سريعة)")
         scope_df = filtered_df if not filtered_df.empty else df_emp
         scope_df = scope_df.copy(); scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
@@ -837,73 +812,6 @@ if role == "موظف" and employee:
                     st.success("✅ تم التلوين"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
-
-    # Add client
-    st.markdown("### ➕ أضف عميل جديد")
-    with st.form("emp_add_client"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nom = st.text_input("👤 الاسم و اللقب")
-            tel_raw = st.text_input("📞 رقم الهاتف")
-            formation = st.text_input("📚 التكوين")
-            inscription = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"])
-        with col2:
-            type_contact = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
-            date_ajout_in = st.date_input("🕓 تاريخ الإضافة", value=date.today())
-            date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
-        if st.form_submit_button("📥 أضف العميل"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                tel = normalize_tn_phone(tel_raw)
-                if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
-                if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
-                insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
-                ws.append_row([nom, tel, type_contact, formation, "", fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""])
-                st.success("✅ تم إضافة العميل"); st.cache_data.clear()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء الإضافة: {e}")
-
-    # Reassign
-    st.markdown("### 🔁 نقل عميل بين الموظفين")
-    if all_employes:
-        colRA, colRB = st.columns(2)
-        with colRA:
-            src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
-        with colRB:
-            dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
-        df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
-        if df_src.empty:
-            st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
-        else:
-            pick = st.selectbox(
-                "اختر العميل للنقل",
-                [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
-                key="reassign_pick"
-            )
-            phone_pick = normalize_tn_phone(pick.split("—")[-1])
-            if st.button("🚚 نقل الآن"):
-                try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
-                    ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
-                    values = ws_src.get_all_values()
-                    header = values[0] if values else []
-                    row_idx = None
-                    if "Téléphone" in header:
-                        tel_idx = header.index("Téléphone")
-                        for i, r in enumerate(values[1:], start=2):
-                            if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == phone_pick:
-                                row_idx = i; break
-                    if not row_idx: st.error("❌ لم يتم العثور على هذا العميل.")
-                    else:
-                        row_values = ws_src.row_values(row_idx)
-                        if len(row_values) < len(EXPECTED_HEADERS):
-                            row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
-                        row_values = row_values[:len(EXPECTED_HEADERS)]
-                        row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                        ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
-                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ أثناء النقل: {e}")
 
 # ---------------- Admin Page ----------------
 if role == "أدمن":
