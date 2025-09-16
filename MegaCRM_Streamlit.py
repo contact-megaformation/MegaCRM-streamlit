@@ -667,7 +667,7 @@ if role == "موظف" and employee:
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
     def render_table(df_disp: pd.DataFrame):
-    if df_disp.empty:
+        if df_disp.empty:
         st.info("لا توجد بيانات."); return
 
     _df = df_disp.copy()
