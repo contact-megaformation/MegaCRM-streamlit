@@ -830,8 +830,7 @@ if role == "موظف" and employee:
                 st.success("✅ تم إضافة العميل"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الإضافة: {e}")
-wa_link = f"https://wa.me/{normalize_tn_phone(row['Téléphone'])}?text=Bonjour%20{row['Nom & Prénom']}"
-st.markdown(f"[📲 WhatsApp]({wa_link})", unsafe_allow_html=True)
+
     # -------- Reassign between employees --------
     st.markdown("### 🔁 نقل عميل بين الموظفين")
     if all_employes:
@@ -873,7 +872,8 @@ st.markdown(f"[📲 WhatsApp]({wa_link})", unsafe_allow_html=True)
                         st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
-
+wa_link = f"https://wa.me/{normalize_tn_phone(row['Téléphone'])}?text=Bonjour%20{row['Nom & Prénom']}"
+st.markdown(f"[📲 WhatsApp]({wa_link})", unsafe_allow_html=True)
 # ---------------- Admin Page ----------------
 if role == "أدمن":
     st.markdown("## 👑 لوحة الأدمِن")
