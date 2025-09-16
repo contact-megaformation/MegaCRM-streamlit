@@ -666,8 +666,7 @@ if role == "موظف" and employee:
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
-
-    def render_table(df_disp: pd.DataFrame):
+            def render_table(df_disp: pd.DataFrame):
     if df_disp.empty:
         st.info("لا توجد بيانات."); return
 
@@ -706,6 +705,7 @@ if role == "موظف" and employee:
             )
         }
     )
+
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
