@@ -385,10 +385,11 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         df_view, reste_summary = fin_compute_reste_auto(df_view)
 
         # تحديث Alert على أساس Reste_Auto > 0 (باستعمال Echeance_dt الموحّد)
-rest_col = pd.to_numeric(
-    df_view["Reste_Auto"] if "Reste_Auto" in df_view.columns else pd.Series([0]*len(df_view)),
-    errors="coerce"
-).fillna(0)
+if "Reste_Auto" in df_view.columns:
+    rest_col = pd.to_numeric(df_view["Reste_Auto"], errors="coerce").fillna(0)
+else:
+    rest_col = pd.Series([0]*len(df_view), index=df_view.index)
+
 if "Echeance_dt" not in df_view.columns and "Echeance" in df_view.columns:
     df_view["Echeance_dt"] = pd.to_datetime(df_view["Echeance"], errors="coerce", dayfirst=True)
 
