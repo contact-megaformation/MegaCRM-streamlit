@@ -111,6 +111,8 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     if not values:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(values[1:], columns=values[0])
+    # 🔧 شيل أي أعمدة مكرّرة جاية من الشيت
+    df = df.loc[:, ~pd.Index(df.columns).duplicated()]
 
     # Dates
     if "Date" in df.columns:
@@ -153,6 +155,9 @@ def normalize_tn_phone(s: str) -> str:
     if digits.startswith("216"): return digits
     if len(digits) == 8: return "216" + digits
     return digits
+
+def format_display_phone(s: str) -> str:
+    d = "".join(ch for ch in str(s) if s is not None for ch in str(s) if ch.isdigit())
 
 def format_display_phone(s: str) -> str:
     d = "".join(ch for ch in str(s) if ch.isdigit())
@@ -241,6 +246,8 @@ def load_all_data():
             fixed_rows.append(r)
 
         df = pd.DataFrame(fixed_rows, columns=EXPECTED_HEADERS)
+        # 🔧 في حال صار تكرار أعمدة لأي سبب
+        df = df.loc[:, ~pd.Index(df.columns).duplicated()]
         df["__sheet_name"] = title
         all_dfs.append(df)
 
@@ -340,10 +347,21 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     st.subheader(f"📄 {fin_title}")
     if kind == "Revenus":
-        cols_show = [c for c in ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Alert","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
+        cols_show = [c for c in ["Date","Libellé","Prix","Montant_Admin","Montant_Structure",
+                                 "Montant_PreInscription","Montant_Total","Echeance","Reste",
+                                 "Alert","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     else:
-        cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
-    st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
+        cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode",
+                                 "Employé","Catégorie","Note"] if c in df_view.columns]
+
+    # 🔧 إزالة أي أعمدة مكررة قبل العرض + تنظيف قائمة الأعمدة
+    df_view = df_view.loc[:, ~pd.Index(df_view.columns).duplicated()]
+    cols_show = list(dict.fromkeys(cols_show))
+
+    st.dataframe(
+        df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show),
+        use_container_width=True
+    )
 
     # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
@@ -464,8 +482,10 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             )
 
             if st.form_submit_button("✅ حفظ العملية"):
-                if not libelle.strip(): st.error("Libellé مطلوب."); 
-                elif prix <= 0: st.error("Prix مطلوب."); 
+                if not libelle.strip():
+                    st.error("Libellé مطلوب.")
+                elif prix <= 0:
+                    st.error("Prix مطلوب.")
                 elif montant_total <= 0 and montant_preins <= 0:
                     st.error("المبلغ لازم > 0 (Admin/Structure أو Pré-Inscription).")
                 else:
@@ -501,8 +521,10 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             note      = c3.text_area("Note (اختياري)")
 
             if st.form_submit_button("✅ حفظ العملية"):
-                if not libelle.strip(): st.error("Libellé مطلوب.")
-                elif montant <= 0: st.error("المبلغ لازم > 0.")
+                if not libelle.strip():
+                    st.error("Libellé مطلوب.")
+                elif montant <= 0:
+                    st.error("المبلغ لازم > 0.")
                 else:
                     fin_append_row(
                         client, SPREADSHEET_ID, fin_title,
@@ -609,12 +631,15 @@ if global_phone.strip():
     search_df = df_all.copy()
     search_df["Téléphone_norm"] = search_df["Téléphone"].apply(normalize_tn_phone)
     search_df["Alerte"] = search_df.get("Alerte_view", "")
-    search_df = search_df[search_df["Téléphone_norm"] == q_norm]
+    search_df = search_df["Téléphone_norm"] == q_norm
+    search_df = df_all[search_df].copy()
     if search_df.empty:
         st.info("❕ ما لقيتش عميل بهذا الرقم.")
     else:
         display_cols = [c for c in EXPECTED_HEADERS if c in search_df.columns]
         if "Employe" in search_df.columns and "Employe" not in display_cols: display_cols.append("Employe")
+        # 🔧 إزالة أعمدة مكررة قبل العرض
+        search_df = search_df.loc[:, ~pd.Index(search_df.columns).duplicated()]
         styled_global = (
             search_df[display_cols]
             .style.apply(highlight_inscrit_row, axis=1)
@@ -655,6 +680,8 @@ if role == "موظف" and employee:
         _df = df_disp.copy()
         _df["Alerte"] = _df.get("Alerte_view", "")
         display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
+        # 🔧 إزالة أعمدة مكررة قبل العرض
+        _df = _df.loc[:, ~pd.Index(_df.columns).duplicated()]
         styled = (
             _df[display_cols]
             .style.apply(highlight_inscrit_row, axis=1)
@@ -669,7 +696,7 @@ if role == "موظف" and employee:
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
         _df = filtered_df.copy(); _df["Alerte"] = _df.get("Alerte_view", "")
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
-        st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
+        render_table(alerts_df)
 
     # Edit client
     if not df_emp.empty:
@@ -683,7 +710,7 @@ if role == "موظف" and employee:
         if phone_choices:
             chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
             chosen_phone = phone_choices.get(chosen_key, "")
-            cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
+            cur_row = df_emp_edit[df_emp_edit["TéléPHONE_norm".lower()] == chosen_phone].iloc[0] if chosen_phone else None
 
             cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
             cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
@@ -721,7 +748,8 @@ if role == "موظف" and employee:
                 try:
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
                     row_idx = find_row_by_phone(ws, normalize_tn_phone(chosen_phone))
-                    if not row_idx: st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
+                    if not row_idx:
+                        st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
                     else:
                         col_map = {h: EXPECTED_HEADERS.index(h) + 1 for h in [
                             "Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"
@@ -932,26 +960,4 @@ if role == "أدمن":
             suivi_date_a = st.date_input("تاريخ المتابعة", value=date.today(), key="admin_dt_suivi")
             if st.button("📥 أضف"):
                 try:
-                    if not (nom_a and tel_a_raw and formation_a and target_emp): st.error("❌ حقول ناقصة."); st.stop()
-                    tel_a = normalize_tn_phone(tel_a_raw)
-                    if tel_a in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود.")
-                    else:
-                        insc_val = "Oui" if inscription_a=="Inscrit" else "Pas encore"
-                        ws = sh.worksheet(target_emp)
-                        ws.append_row([nom_a, tel_a, type_contact_a, formation_a, "", fmt_date(date_ajout_a), fmt_date(suivi_date_a), "", insc_val, target_emp, ""])
-                        st.success("✅ تمت الإضافة"); st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
-
-        with colC:
-            st.subheader("🗑️ حذف موظّف")
-            emp_to_delete = st.selectbox("اختر الموظّف", all_employes, key="admin_del_emp")
-            if st.button("❗ حذف الورقة كاملة"):
-                try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
-                    sh.del_worksheet(sh.worksheet(emp_to_delete))
-                    st.success("تم الحذف"); st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
-
-        st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
+                    if
