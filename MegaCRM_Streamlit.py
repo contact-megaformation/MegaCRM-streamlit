@@ -1,13 +1,13 @@
-# MegaCRM_Streamlit_App.py — CRM + مداخيل منظّم (MB/BZ) مع حماية فروع + واتساب تحت الجدول + ألوان/ألرت
+# MegaCRM_Streamlit_App.py — CRM + مداخيل منظّم (MB/BZ) مع حماية فروع + واتساب برسالة مخصّصة + Reste_Auto
 # =================================================================================================
 # - CRM: موظّفين (قفل بكلمة سر)، قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة، نقل
 # - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة)
 # - مداخيل/مصاريف لكل فرع (Menzel Bourguiba / Bizerte) مع كلمة سر لكل فرع
 # - Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل) + Montant_Total=(Admin+Structure)
-#            + Echeance + Reste (على أساس Admin+Structure) + Alert تلقائي
+#            + Echeance + Reste_Auto (المتبقّي التلقائي) + Alert (اليوم/متأخّر)
 # - Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
 # - ملخّص شهري يظهر للأدمن فقط (مخفي على الموظفين)
-# - زرّ WhatsApp في قسم مستقل تحت جدول العملاء (موش داخل الجدول)
+# - زرّ WhatsApp في قسم مستقل تحت جدول العملاء + حقل نصّ رسالة يبعثها
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
 # -------------------------------------------------------------------------------------------------
 
@@ -117,10 +117,11 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     if kind=="Revenus":
         today = datetime.now().date()
         df["Alert"] = ""
-        if "Echeance" in df.columns and "Reste" in df.columns:
-            late_mask  = df["Echeance"].notna() & (df["Echeance"] < today) & (df["Reste"] > 0)
-            today_mask = df["Echeance"].notna() & (df["Echeance"] == today) & (df["Reste"] > 0)
-            df.loc[late_mask, "Alert"] = "⚠️ متأخر"
+        if "Echeance" in df.columns:
+            # مؤقتًا نملأ على أساس Reste (سيتبدّل لاحقًا بعد حساب Reste_Auto)
+            late_mask  = df["Echeance"].notna() & (df["Echeance"] <  today)
+            today_mask = df["Echeance"].notna() & (df["Echeance"] == today)
+            df.loc[late_mask,  "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
@@ -131,6 +132,40 @@ def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     header = ws.row_values(1)
     vals = [str(row.get(col, "")) for col in header]
     ws.append_row(vals)
+
+def fin_compute_reste_auto(df: pd.DataFrame):
+    """
+    يحسب المتبقي تلقائيًا شهريًا لكل (Employé, Libellé):
+    Reste_Auto = max(Prix) - sum(Montant_Total)  حيث Montant_Total = Admin + Structure
+    ويرجع df فيه عمود Reste_Auto + جدول ملخّص per client.
+    """
+    if df.empty:
+        return df.assign(Reste_Auto=pd.NA), pd.DataFrame(columns=["Employé","Libellé","Prix_max","Versé","Reste_Auto"])
+
+    need_cols = {"Prix","Libellé"}
+    if not need_cols.issubset(set(df.columns)):
+        return df.assign(Reste_Auto=pd.NA), pd.DataFrame(columns=["Employé","Libellé","Prix_max","Versé","Reste_Auto"])
+
+    # Montant_Total = Admin + Structure
+    mt = pd.to_numeric(df.get("Montant_Admin", 0), errors="coerce").fillna(0) + \
+         pd.to_numeric(df.get("Montant_Structure", 0), errors="coerce").fillna(0)
+    df = df.copy()
+    df["Montant_Total"] = mt
+
+    key_cols = [c for c in ["Employé","Libellé"] if c in df.columns]
+    if not key_cols:
+        return df.assign(Reste_Auto=pd.NA), pd.DataFrame(columns=["Employé","Libellé","Prix_max","Versé","Reste_Auto"])
+
+    agg = (
+        df.groupby(key_cols, dropna=False)
+          .agg(Prix_max=("Prix","max"), Versé=("Montant_Total","sum"))
+          .reset_index()
+    )
+    agg["Reste_Auto"] = (agg["Prix_max"] - agg["Versé"]).clip(lower=0)
+
+    df2 = df.merge(agg[key_cols+["Reste_Auto"]], on=key_cols, how="left")
+    summary = agg.sort_values("Reste_Auto", ascending=False)
+    return df2, summary
 
 # ---------------- 5) Common helpers ----------------
 def fmt_date(d: date | None) -> str:
@@ -195,7 +230,6 @@ def _emp_lock_ui(emp_name: str):
                     st.error("كلمة سرّ غير صحيحة.")
 
 def _get_branch_password(code: str) -> str:
-    # code in {"MB","BZ"}
     try:
         bp = st.secrets["branch_passwords"]
         return str(bp.get(code, "MB_2025!" if code=="MB" else "BZ_2025!"))
@@ -318,8 +352,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         st.subheader("🔧 إعدادات المداخيل/المصاريف")
         branch = st.selectbox("الفرع", ["Menzel Bourguiba", "Bizerte"], key="fin_branch")
         branch_code = "MB" if "Menzel" in branch else "BZ"
-        # حماية الفرع بكلمة السر الخاصة به
-        _branch_lock_ui(branch_code, branch)
+        _branch_lock_ui(branch_code, branch)  # حماية الفرع بكلمة سرّه
 
         kind_ar = st.radio("النوع", ["مداخيل","مصاريف"], horizontal=True, key="fin_kind_ar")
         kind = "Revenus" if kind_ar == "مداخيل" else "Dépenses"
@@ -338,6 +371,20 @@ if tab_choice == "مداخيل (MB/Bizerte)":
     if role == "موظف" and employee and "Employé" in df_view.columns:
         df_view = df_view[df_view["Employé"].fillna("").str.strip().str.lower() == employee.strip().lower()]
 
+    # === (جديد) حساب المبلغ المتبقّي تلقائيًا + تحديث التنبيه بناءً عليه (Revenus فقط)
+    if kind == "Revenus":
+        df_view, reste_summary = fin_compute_reste_auto(df_view)
+
+        # تحديث Alert على أساس Reste_Auto > 0
+        if "Echeance" in df_view.columns:
+            today = datetime.now().date()
+            rest_col = pd.to_numeric(df_view.get("Reste_Auto", 0), errors="coerce").fillna(0)
+            late_mask  = df_view["Echeance"].notna() & (df_view["Echeance"] <  today) & (rest_col > 0)
+            today_mask = df_view["Echeance"].notna() & (df_view["Echeance"] == today) & (rest_col > 0)
+            df_view["Alert"] = df_view.get("Alert","")
+            df_view.loc[late_mask,  "Alert"] = "⚠️ متأخر"
+            df_view.loc[today_mask, "Alert"] = "⏰ اليوم"
+
     with st.expander("🔎 فلاتر"):
         c1, c2, c3 = st.columns(3)
         date_from = c1.date_input("من تاريخ", value=None, key="fin_from")
@@ -355,22 +402,35 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     st.subheader(f"📄 {fin_title}")
     if kind == "Revenus":
-        cols_show = [c for c in ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Alert","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
+        cols_show = [c for c in [
+            "Date","Libellé","Prix",
+            "Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total",
+            "Echeance","Reste_Auto","Alert","Mode","Employé","Catégorie","Note"
+        ] if c in df_view.columns]
     else:
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
+
+    # ملخّص المتبقي حسب العميل/Libellé (Revenus فقط) — يظهر للجميع لأنه مفيد للمتابعة اليومية
+    if kind == "Revenus":
+        with st.expander("🧮 المتبقي حسب العميل (هذا الشهر)"):
+            kcols = [c for c in ["Employé","Libellé"] if c in reste_summary.columns]
+            show_cols = kcols + ["Prix_max","Versé","Reste_Auto"]
+            st.dataframe(reste_summary[show_cols] if not reste_summary.empty else pd.DataFrame(columns=show_cols),
+                         use_container_width=True)
 
     # ====================== ملخّص شهري تفصيلي (أدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف)"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
             dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+            rev_df, _ = fin_compute_reste_auto(rev_df)
 
             sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
             sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
             sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
-            sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
-            sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
+            sum_total_as = (sum_admin + sum_struct)
+            sum_reste_due= rev_df["Reste_Auto"].sum()              if ("Reste_Auto" in rev_df.columns and not rev_df.empty) else 0.0
 
             if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
                 dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin",        "Montant"].sum()
@@ -563,17 +623,24 @@ if role == "موظف" and employee:
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
         st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
 
-    # قسم واتساب مستقل تحت الجدول (موش داخل الجدول)
+    # قسم واتساب مستقل تحت الجدول: اختيار عميل + نص رسالة
     st.markdown("### 📲 WhatsApp")
     if not df_emp.empty:
         scope_df = filtered_df if not filtered_df.empty else df_emp
         options = [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in scope_df.iterrows()]
         if options:
-            pick_wa = st.selectbox("اختر العميل لفتح واتساب", options, key="wa_pick")
-            tel_wa = normalize_tn_phone(pick_wa.split("—")[-1])
-            name_wa = pick_wa.split("—")[0].strip().replace(" ", "%20")
-            wa_link = f"https://wa.me/{tel_wa}?text=Bonjour%20{name_wa}"
-            st.link_button("فتح الواتساب", wa_link, help="يفتح WhatsApp Web/الموبايل")
+            wa_cols = st.columns([2, 3, 1])
+            with wa_cols[0]:
+                pick_wa = st.selectbox("اختر العميل", options, key="wa_pick")
+            with wa_cols[1]:
+                default_msg = "السلام عليكم، بخصوص التكوين. هل يناسبك نحكيو اليوم؟"
+                wa_text = st.text_input("نصّ رسالة واتساب", value=default_msg, key="wa_text")
+            with wa_cols[2]:
+                tel_wa = normalize_tn_phone(pick_wa.split("—")[-1])
+                # urlencode بسيط
+                msg_enc = str(wa_text).replace(" ", "%20").replace("\n","%0A")
+                wa_link = f"https://wa.me/{tel_wa}?text={msg_enc}"
+                st.link_button("فتح الواتساب", wa_link, help="يفتح WhatsApp Web/الموبايل")
 
     # تعديل عميل
     if not df_emp.empty:
@@ -659,7 +726,7 @@ if role == "موظف" and employee:
         scope_df = scope_df.copy(); scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
         tel_to_update_key = st.selectbox(
             "اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphonique' if 'Téléphonique' in scope_df.columns else 'Téléphone']))}" for _, r in scope_df.iterrows()],
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
             key="note_quick_pick"
         )
         tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
