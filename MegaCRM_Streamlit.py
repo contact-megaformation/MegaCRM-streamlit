@@ -103,28 +103,37 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     values = ws.get_all_values()
     if not values:
         return pd.DataFrame(columns=cols)
+
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    if "Date" in df.columns: df["Date"] = df["Date"].apply(_parse_date_any)
-    if kind=="Revenus" and "Echeance" in df.columns: df["Echeance"] = df["Echeance"].apply(_parse_date_any)
+    # توحيد التواريخ
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+    if kind=="Revenus" and "Echeance" in df.columns:
+        # نحافظ على النص الأصلي للعرض، ونبني عمود dt للمقارنة
+        df["Echeance_dt"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
 
+    # أرقام
     if kind=="Revenus":
         for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
-            if c in df.columns: df[c] = df[c].apply(_to_num)
+            if c in df.columns:
+                df[c] = pd.to_numeric(df[c].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce")
     else:
-        if "Montant" in df.columns: df["Montant"] = df["Montant"].apply(_to_num)
+        if "Montant" in df.columns:
+            df["Montant"] = pd.to_numeric(df["Montant"].astype(str).str.replace(" ", "").str.replace(",", "."), errors="coerce")
 
+    # Alert (مبدئياً، يتحدّث لاحقاً حسب Reste_Auto)
     if kind=="Revenus":
-        today = datetime.now().date()
         df["Alert"] = ""
-        if "Echeance" in df.columns:
-            # مؤقتًا نملأ على أساس Reste (سيتبدّل لاحقًا بعد حساب Reste_Auto)
-            late_mask  = df["Echeance"].notna() & (df["Echeance"] <  today)
-            today_mask = df["Echeance"].notna() & (df["Echeance"] == today)
+        if "Echeance_dt" in df.columns:
+            today_ts = pd.Timestamp.today().normalize()
+            late_mask  = df["Echeance_dt"].notna() & (df["Echeance_dt"] <  today_ts)
+            today_mask = df["Echeance_dt"].notna() & (df["Echeance_dt"] == today_ts)
             df.loc[late_mask,  "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
 
     return df
+
 
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
@@ -375,15 +384,19 @@ if tab_choice == "مداخيل (MB/Bizerte)":
     if kind == "Revenus":
         df_view, reste_summary = fin_compute_reste_auto(df_view)
 
-        # تحديث Alert على أساس Reste_Auto > 0
-        if "Echeance" in df_view.columns:
-            today = datetime.now().date()
-            rest_col = pd.to_numeric(df_view.get("Reste_Auto", 0), errors="coerce").fillna(0)
-            late_mask  = df_view["Echeance"].notna() & (df_view["Echeance"] <  today) & (rest_col > 0)
-            today_mask = df_view["Echeance"].notna() & (df_view["Echeance"] == today) & (rest_col > 0)
-            df_view["Alert"] = df_view.get("Alert","")
-            df_view.loc[late_mask,  "Alert"] = "⚠️ متأخر"
-            df_view.loc[today_mask, "Alert"] = "⏰ اليوم"
+        # تحديث Alert على أساس Reste_Auto > 0 (باستعمال Echeance_dt الموحّد)
+rest_col = pd.to_numeric(df_view.get("Reste_Auto", 0), errors="coerce").fillna(0)
+if "Echeance_dt" not in df_view.columns and "Echeance" in df_view.columns:
+    df_view["Echeance_dt"] = pd.to_datetime(df_view["Echeance"], errors="coerce", dayfirst=True)
+
+if "Echeance_dt" in df_view.columns:
+    today_ts = pd.Timestamp.today().normalize()
+    late_mask  = df_view["Echeance_dt"].notna() & (df_view["Echeance_dt"] <  today_ts) & (rest_col > 0)
+    today_mask = df_view["Echeance_dt"].notna() & (df_view["Echeance_dt"] == today_ts) & (rest_col > 0)
+    df_view["Alert"] = df_view.get("Alert","")
+    df_view.loc[late_mask,  "Alert"] = "⚠️ متأخر"
+    df_view.loc[today_mask, "Alert"] = "⏰ اليوم"
+
 
     with st.expander("🔎 فلاتر"):
         c1, c2, c3 = st.columns(3)
