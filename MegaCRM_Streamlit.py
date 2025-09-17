@@ -3,8 +3,8 @@
 # - CRM كامل: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة، نقل + زر WhatsApp
 # - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة)
 # - تبويب "مداخيل (MB/Bizerte)":
-#     Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل) + Montant_Total=(Admin+Structure)
-#              + Echeance + Reste (على أساس Admin+Structure فقط) + Alert تلقائي
+#     Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل)
+#              + Montant_Total=(Admin+Structure) + Echeance + Reste + Alert تلقائي
 #     Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
 # - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
@@ -55,14 +55,14 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
-# Revenus (Pré-Inscription منفصلة، و Montant_Total = Admin + Structure فقط)
+# Revenus
 FIN_REV_COLUMNS = [
     "Date", "Libellé", "Prix",
     "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total",
     "Echeance", "Reste",
     "Mode", "Employé", "Catégorie", "Note"
 ]
-# Dépenses (مصدر الصندوق)
+# Dépenses
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
@@ -118,23 +118,20 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     if kind == "Revenus" and "Echeance" in df.columns:
         df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
 
-    # Numbers
+    # Numbers + Alerts
     if kind == "Revenus":
         for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
             if c in df.columns:
                 df[c] = _to_num_series(df[c])
-        # Alerts + بروز "Reste>0"
         df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
             today_ts = pd.Timestamp.now().normalize()
             ech = pd.to_datetime(df["Echeance"], errors="coerce")
             reste = pd.to_numeric(df["Reste"], errors="coerce").fillna(0.0)
-            late_mask = ech.notna() & (ech < today_ts) & (reste > 0)
+            late_mask  = ech.notna() & (ech <  today_ts) & (reste > 0)
             today_mask = ech.notna() & (ech.dt.normalize() == today_ts) & (reste > 0)
-            df.loc[late_mask, "Alert"] = "⚠️ متأخر"
+            df.loc[late_mask,  "Alert"] = "⚠️ متأخر"
             df.loc[today_mask, "Alert"] = "⏰ اليوم"
-        # عمود مساعد للتلوين
-        df["__reste_flag"] = (df.get("Reste", 0) > 0).astype(int)
     else:
         if "Montant" in df.columns:
             df["Montant"] = _to_num_series(df["Montant"])
@@ -264,7 +261,7 @@ employee = None
 if role == "موظف":
     employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if all_employes else None
 
-# ---------------- Admin lock (مرفوع لفوق قبل الاستعمال) ----------------
+# ---------------- Admin lock ----------------
 def admin_unlocked() -> bool:
     ok = st.session_state.get("admin_ok", False)
     ts = st.session_state.get("admin_ok_at", None)
@@ -394,7 +391,134 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             x1.metric("Total Admin+Structure (مداخيل فقط)", f"{sum_total_as:,.2f}")
             x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
             x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
-    st.stop()
+
+    # ====================== إضافة عملية جديدة ======================
+    st.markdown("---")
+    st.markdown("### ➕ إضافة عملية جديدة")
+
+    # اقتراح ربط بعميل مُسجَّل
+    selected_client_info = None
+    client_default_lib = ""
+    emp_default = (employee or "")
+    if kind == "Revenus":
+        st.markdown("#### 👤 اربط الدفعة بعميل مُسجَّل (اختياري)")
+        reg_df = df_all.copy()
+        reg_df["Inscription_norm"] = reg_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
+        reg_df = reg_df[reg_df["Inscription_norm"].isin(["oui","inscrit"])]
+        if role == "موظف" and employee:
+            reg_df = reg_df[reg_df["__sheet_name"] == employee]
+        if not reg_df.empty:
+            def _opt(row):
+                phone = format_display_phone(row.get("Téléphone",""))
+                return f"{row.get('Nom & Prénom','')} — {phone} — {row.get('Formation','')}  [{row.get('__sheet_name','')}]"
+            options = [_opt(r) for _, r in reg_df.iterrows()]
+            pick = st.selectbox("اختر عميلًا مُسجَّلًا", ["— بدون اختيار —"] + options, key="fin_client_pick")
+            if pick and pick != "— بدون اختيار —":
+                idx = options.index(pick); row = reg_df.iloc[idx]
+                selected_client_info = {
+                    "name": str(row.get("Nom & Prénom","")).strip(),
+                    "tel":  str(row.get("Téléphone","")).strip(),
+                    "formation": str(row.get("Formation","")).strip(),
+                    "emp": str(row.get("__sheet_name","")).strip()
+                }
+                client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
+                if not emp_default: emp_default = selected_client_info["emp"]
+
+    with st.form("fin_add_row"):
+        d1, d2, d3 = st.columns(3)
+        date_val = d1.date_input("Date", value=datetime.today())
+        libelle  = d2.text_input("Libellé", value=(client_default_lib if kind=="Revenus" else ""))
+        employe  = d3.selectbox("Employé", all_employes if all_employes else [""], index=(all_employes.index(emp_default) if emp_default in all_employes else 0))
+
+        if kind == "Revenus":
+            r1, r2, r3 = st.columns(3)
+            prix            = r1.number_input("💰 Prix (سعر التكوين)", min_value=0.0, step=10.0)
+            montant_admin   = r2.number_input("🏢 Montant Admin", min_value=0.0, step=10.0)
+            montant_struct  = r3.number_input("🏫 Montant Structure", min_value=0.0, step=10.0)
+
+            r4, r5 = st.columns(2)
+            montant_preins  = r4.number_input("📝 Montant Pré-Inscription", min_value=0.0, step=10.0, help="اختياري")
+            montant_total   = float(montant_admin) + float(montant_struct)  # Pre-Inscription ما يدخلش في Total
+
+            e1, e2, e3 = st.columns(3)
+            echeance   = e1.date_input("⏰ تاريخ الاستحقاق", value=date.today())
+            mode       = e2.selectbox("Mode", ["Espèces","Virement","Carte","Chèque","Autre"])
+            categorie  = e3.text_input("Catégorie", value="Revenus")
+
+            note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
+            note = st.text_area("Note", value=note_default)
+
+            # نحسب Reste تلقائيًا لكن نخلي إمكانية تعديله يدويًا
+            rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_title, "Revenus")
+            paid_so_far = 0.0
+            if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
+                same = rev_df_current[rev_df_current["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()]
+                paid_so_far = float(same["Montant_Total"].sum()) if not same.empty else 0.0
+            reste_calc = max(float(prix) - (paid_so_far + float(montant_total)), 0.0)
+
+            reste_input = st.number_input("💳 الباقي للدفع (Reste)", min_value=0.0, value=float(round(reste_calc,2)), step=10.0, help="يتحسب آليًا، وتنجم تبدّلو يدويًا")
+
+            st.caption(
+                f"💡 Total (Admin+Structure): {montant_total:.2f} — مدفوع سابقًا لنفس Libellé: {paid_so_far:.2f} — "
+                f"Reste المقترح: {reste_calc:.2f} — Pré-Inscription منفصل: {montant_preins:.2f}"
+            )
+
+            if st.form_submit_button("✅ حفظ العملية"):
+                if not libelle.strip(): st.error("Libellé مطلوب."); 
+                elif prix <= 0: st.error("Prix مطلوب."); 
+                elif montant_total <= 0 and montant_preins <= 0:
+                    st.error("المبلغ لازم > 0 (Admin/Structure أو Pré-Inscription).")
+                else:
+                    fin_append_row(
+                        client, SPREADSHEET_ID, fin_title,
+                        {
+                            "Date": fmt_date(date_val),
+                            "Libellé": libelle.strip(),
+                            "Prix": f"{float(prix):.2f}",
+                            "Montant_Admin": f"{float(montant_admin):.2f}",
+                            "Montant_Structure": f"{float(montant_struct):.2f}",
+                            "Montant_PreInscription": f"{float(montant_preins):.2f}",
+                            "Montant_Total": f"{float(montant_total):.2f}",
+                            "Echeance": fmt_date(echeance),
+                            "Reste": f"{float(reste_input):.2f}",
+                            "Mode": mode,
+                            "Employé": employe.strip(),
+                            "Catégorie": categorie.strip(),
+                            "Note": note.strip(),
+                        },
+                        "Revenus"
+                    )
+                    st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
+
+        else:  # مصاريف
+            r1, r2, r3 = st.columns(3)
+            montant   = r1.number_input("Montant", min_value=0.0, step=10.0)
+            caisse    = r2.selectbox("Caisse_Source", ["Caisse_Admin","Caisse_Structure","Caisse_Inscription"])
+            mode      = r3.selectbox("Mode", ["Espèces","Virement","Carte","Chèque","Autre"])
+
+            c2, c3 = st.columns(2)
+            categorie = c2.text_input("Catégorie", value="Achat")
+            note      = c3.text_area("Note (اختياري)")
+
+            if st.form_submit_button("✅ حفظ العملية"):
+                if not libelle.strip(): st.error("Libellé مطلوب.")
+                elif montant <= 0: st.error("المبلغ لازم > 0.")
+                else:
+                    fin_append_row(
+                        client, SPREADSHEET_ID, fin_title,
+                        {
+                            "Date": fmt_date(date_val),
+                            "Libellé": libelle.strip(),
+                            "Montant": f"{float(montant):.2f}",
+                            "Caisse_Source": caisse,
+                            "Mode": mode,
+                            "Employé": employe.strip(),
+                            "Catégorie": categorie.strip(),
+                            "Note": note.strip(),
+                        },
+                        "Dépenses"
+                    )
+                    st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
 
 # ---------------- CRM: مشتقّات وعرض ----------------
 df_all = df_all.copy()
@@ -672,13 +796,11 @@ if role == "موظف" and employee:
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 row_idx = None
-                if "TéléPHONE" in [h.upper() for h in header]:
-                    tel_idx = [h.upper() for h in header].index("TÉLÉPHONE") if "TÉLÉPHONE" in [h.upper() for h in header] else header.index("Téléphone")
-                else:
+                if "Téléphone" in header:
                     tel_idx = header.index("Téléphone")
-                for i, r in enumerate(values[1:], start=2):
-                    if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_color:
-                        row_idx = i; break
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_color:
+                            row_idx = i; break
                 if not row_idx: st.error("❌ لم يتم إيجاد العميل.")
                 else:
                     color_cell = EXPECTED_HEADERS.index("Tag") + 1
@@ -755,7 +877,6 @@ if role == "موظف" and employee:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
     st.markdown("### 💬 تواصل WhatsApp")
-    # اختيار عميل من نفس قائمة الموظف الحالي
     if not df_emp.empty:
         wa_pick = st.selectbox(
             "اختر العميل لفتح واتساب",
