@@ -1,4 +1,4 @@
-# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف + Pré-Inscription منفصلة
+# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف + Pré-Inscription منفصلة + 📝 نوط داخلية
 # =================================================================================================
 # - CRM كامل: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة، نقل + زر WhatsApp
 # - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة)
@@ -8,13 +8,14 @@
 #     Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
 # - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
+# - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
 
-import json, time, urllib.parse
+import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
 from google.oauth2.service_account import Credentials
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from PIL import Image
 
 # ---------------- Page config ----------------
@@ -48,6 +49,158 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
+# ============================ 🆕 InterNotes (نوط داخلية) ============================
+INTER_NOTES_SHEET = "InterNotes"  # تُنشأ تلقائيًا لو مش موجودة
+INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
+
+def inter_notes_open_ws():
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(INTER_NOTES_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=INTER_NOTES_SHEET, rows="1000", cols=str(len(INTER_NOTES_HEADERS)))
+        ws.update("1:1", [INTER_NOTES_HEADERS])
+    return ws
+
+def inter_notes_append(sender: str, receiver: str, message: str):
+    if not message.strip():
+        return False, "النص فارغ"
+    ws = inter_notes_open_ws()
+    ts = datetime.now(timezone.utc).isoformat()
+    note_id = str(uuid.uuid4())
+    ws.append_row([ts, sender, receiver, message.strip(), "unread", note_id])
+    return True, note_id
+
+def inter_notes_fetch_all_df() -> pd.DataFrame:
+    ws = inter_notes_open_ws()
+    values = ws.get_all_values()
+    if not values or len(values) <= 1:
+        return pd.DataFrame(columns=INTER_NOTES_HEADERS)
+    df = pd.DataFrame(values[1:], columns=values[0])
+    for c in INTER_NOTES_HEADERS:
+        if c not in df.columns:
+            df[c] = ""
+    return df
+
+def inter_notes_fetch_unread(receiver: str) -> pd.DataFrame:
+    df = inter_notes_fetch_all_df()
+    return df[(df["receiver"] == receiver) & (df["status"] == "unread")].copy()
+
+def inter_notes_mark_read(note_ids: list[str]):
+    if not note_ids:
+        return
+    ws = inter_notes_open_ws()
+    values = ws.get_all_values()
+    if not values or len(values) <= 1:
+        return
+    header = values[0]
+    try:
+        idx_note = header.index("note_id")
+        idx_status = header.index("status")
+    except ValueError:
+        return
+    for r, row in enumerate(values[1:], start=2):
+        if len(row) > idx_note and row[idx_note] in note_ids:
+            ws.update_cell(r, idx_status + 1, "read")
+
+def play_sound_mp3(path="notification.mp3"):
+    try:
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        st.markdown(
+            f"""
+            <audio autoplay>
+              <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            </audio>
+            """,
+            unsafe_allow_html=True,
+        )
+    except FileNotFoundError:
+        # صامت إذا الملف غير موجود
+        pass
+
+def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
+    st.subheader("📝 النوط الداخلية")
+
+    # ✍️ إرسال
+    with st.expander("✍️ إرسال نوط لموظف آخر", expanded=True):
+        col1, col2 = st.columns([1,2])
+        with col1:
+            receivers = [e for e in all_employees if e != current_employee] if all_employees else []
+            receiver = st.selectbox("الموظّف المستلم", receivers)
+        with col2:
+            message = st.text_area("الملاحظة", placeholder="اكتب ملاحظة قصيرة...")
+        if st.button("إرسال ✅", use_container_width=True):
+            ok, info = inter_notes_append(current_employee, receiver, message)
+            st.success("تم الإرسال 👌") if ok else st.error(f"تعذّر الإرسال: {info}")
+
+    st.divider()
+
+    # ⟳ أوتو-ريفريش + إشعار
+    _ = st.experimental_autorefresh(interval=10_000, key="inter_notes_poll")
+    if "prev_unread_count" not in st.session_state:
+        st.session_state.prev_unread_count = 0
+
+    unread_df = inter_notes_fetch_unread(current_employee)
+    unread_count = len(unread_df)
+
+    if unread_count > st.session_state.prev_unread_count:
+        st.toast("📩 نوط جديدة وصْلتك!", icon="✉️")
+        play_sound_mp3()
+    st.session_state.prev_unread_count = unread_count
+
+    st.markdown(f"### 📥 غير المقروء: **{unread_count}**")
+    if unread_count == 0:
+        st.info("ما فماش نوط غير مقروءة حاليا.")
+    else:
+        st.dataframe(
+            unread_df[["timestamp","sender","message","note_id"]].sort_values("timestamp", ascending=False),
+            use_container_width=True, height=220
+        )
+        colA, colB = st.columns(2)
+        with colA:
+            if st.button("اعتبر الكل مقروء ✅", use_container_width=True):
+                inter_notes_mark_read(unread_df["note_id"].tolist()); st.success("تم التعليم كمقروء."); st.rerun()
+        with colB:
+            selected_to_read = st.multiselect(
+                "اختار رسائل لتعليمها كمقروء",
+                options=unread_df["note_id"].tolist(),
+                format_func=lambda nid: f"من {unread_df[unread_df['note_id']==nid]['sender'].iloc[0]} — {unread_df[unread_df['note_id']==nid]['message'].iloc[0][:30]}..."
+            )
+            if st.button("تعليم المحدد كمقروء", disabled=not selected_to_read, use_container_width=True):
+                inter_notes_mark_read(selected_to_read); st.success("تم التعليم كمقروء."); st.rerun()
+
+    st.divider()
+    # 🗂️ أرشيفي
+    df_all_notes = inter_notes_fetch_all_df()
+    mine = df_all_notes[(df_all_notes["receiver"] == current_employee) | (df_all_notes["sender"] == current_employee)].copy()
+    st.markdown("### 🗂️ مراسلاتي")
+    if mine.empty:
+        st.caption("ما عندكش مراسلات مسجلة بعد.")
+    else:
+        def fmt_ts(x):
+            try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+            except: return x
+        mine["وقت"] = mine["timestamp"].apply(fmt_ts)
+        mine = mine[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
+        st.dataframe(mine, use_container_width=True, height=280)
+
+    # 🛡️ مراقبة الأدمِن
+    if is_admin:
+        st.divider()
+        st.markdown("### 🛡️ لوحة مراقبة الأدمِن (كل المراسلات)")
+        if df_all_notes.empty:
+            st.caption("لا توجد مراسلات بعد.")
+        else:
+            def fmt_ts2(x):
+                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except: return x
+            df_all_notes["وقت"] = df_all_notes["timestamp"].apply(fmt_ts2)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
+            st.dataframe(disp, use_container_width=True, height=320)
+
+# ============================ /InterNotes ============================
+
 # ---------------- Schemas ----------------
 EXPECTED_HEADERS = [
     "Nom & Prénom","Téléphone","Type de contact","Formation",
@@ -68,7 +221,6 @@ FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aou
 
 # ---------------- Small helpers ----------------
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """يحذف الأعمدة المكرّرة بالإسم (يخلّي أوّل واحد)."""
     if df is None or df.empty:
         return df
     df = df.copy()
@@ -121,18 +273,15 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
     df = pd.DataFrame(values[1:], columns=values[0])
 
-    # Dates
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
     if kind == "Revenus" and "Echeance" in df.columns:
         df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
 
-    # Numbers + Alerts
     if kind == "Revenus":
         for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
             if c in df.columns:
                 df[c] = _to_num_series(df[c])
-        # لا نضيف Alert لو هي موجودة باش ما نكرّرش العمود
         if "Alert" not in df.columns:
             df["Alert"] = ""
         if "Echeance" in df.columns and "Reste" in df.columns:
@@ -232,6 +381,8 @@ def load_all_data():
             continue
         if title.startswith("Revenue ") or title.startswith("Dépense "):
             continue
+        if title == INTER_NOTES_SHEET:
+            continue
 
         all_employes.append(title)
 
@@ -266,7 +417,8 @@ try:
 except Exception:
     pass
 
-tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)"], index=0)
+# 🆕 زدنا "📝 نوط داخلية" كخيار ثالث
+tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)", "📝 نوط داخلية"], index=0)
 role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
 employee = None
 if role == "موظف":
@@ -298,41 +450,6 @@ def admin_lock_ui():
 
 if role == "أدمن":
     admin_lock_ui()
-    # ====== 1) الاستيراد (إذا كان الموديول منفصل) ======
-# from inter_notes import inter_notes_ui
-
-# ====== 2) تعريف اسم الموظف الحالي + هل هو أدمين ======
-# بدّل هاذي حسب لوجيك اللّوغين عندك
-employee_name = st.session_state.get("employee_name", "Olfa")
-is_admin = (employee_name.lower() == "admin")
-
-# جيب قائمة الموظفين (بدّلها بالدالة/الشيت متاعك)
-employee_list = ["Olfa", "Ons", "Sahar", "Dhouha", "Admin"]
-
-# ====== 3) المينيو في الـ Sidebar فيه 3 اختيارات ======
-menu = st.sidebar.selectbox(
-    "التنقّل",
-    ["📋 CRM", "💰 مداخيل", "📝 نوط داخلية"],
-    index=0
-)
-
-# ====== 4) ربط كل اختيار بالواجهة متاعو ======
-if menu == "📋 CRM":
-    # الواجهة القديمة متاع CRM
-    render_crm_ui()  # ← دالتك الحالية
-
-elif menu == "💰 مداخيل":
-    # الواجهة القديمة متاع المداخيل
-    render_revenues_ui()  # ← دالتك الحالية
-
-elif menu == "📝 نوط داخلية":
-    # تبويب النوط كصفحة مستقلّة
-    st.header("📝 النوط الداخلية")
-    inter_notes_ui(
-        current_employee=employee_name,
-        all_employees=employee_list,
-        is_admin=is_admin
-    )
 
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
@@ -384,7 +501,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             df_view = df_view[m]
 
     st.subheader(f"📄 {fin_title}")
-    # إزالة أي أعمدة مكرّرة قبل العرض
     df_view = safe_unique_columns(df_view)
 
     if kind == "Revenus":
@@ -444,7 +560,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
 
-    # اقتراح ربط بعميل مُسجَّل
     selected_client_info = None
     client_default_lib = ""
     emp_default = (employee or "")
@@ -486,7 +601,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
             r4, r5 = st.columns(2)
             montant_preins  = r4.number_input("📝 Montant Pré-Inscription", min_value=0.0, step=10.0, help="اختياري")
-            montant_total   = float(montant_admin) + float(montant_struct)  # Pre-Inscription ما يدخلش في Total
+            montant_total   = float(montant_admin) + float(montant_struct)
 
             e1, e2, e3 = st.columns(3)
             echeance   = e1.date_input("⏰ تاريخ الاستحقاق", value=date.today())
@@ -496,7 +611,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
             note = st.text_area("Note", value=note_default)
 
-            # نحسب Reste تلقائيًا لكن نخلي إمكانية تعديله يدويًا
             rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_title, "Revenus")
             paid_so_far = 0.0
             if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
@@ -946,6 +1060,16 @@ if role == "موظف" and employee:
                 st.info("اضغط على الرابط لفتح واتساب في نافذة/تبويب جديد.")
             except Exception as e:
                 st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
+
+# ---------------- 🆕 صفحة "📝 نوط داخلية" ----------------
+if tab_choice == "📝 نوط داخلية":
+    current_emp_name = (employee if (role == "موظف" and employee) else "Admin")
+    is_admin_user = (role == "أدمن")  # ينجم تشدّها مع admin_unlocked() لو تحب تقفل المراقبة
+    inter_notes_ui(
+        current_employee=current_emp_name,
+        all_employees=all_employes,
+        is_admin=is_admin_user
+    )
 
 # ---------------- Admin Page ----------------
 if role == "أدمن":
