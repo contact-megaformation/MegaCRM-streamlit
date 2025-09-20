@@ -130,24 +130,36 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
             receiver = st.selectbox("الموظّف المستلم", receivers)
         with col2:
             message = st.text_area("الملاحظة", placeholder="اكتب ملاحظة قصيرة...")
+
         if st.button("إرسال ✅", use_container_width=True):
             ok, info = inter_notes_append(current_employee, receiver, message)
-            st.success("تم الإرسال 👌") if ok else st.error(f"تعذّر الإرسال: {info}")
+            if ok:
+                st.success("تم الإرسال 👌")
+            else:
+                st.error(f"تعذّر الإرسال: {info}")
 
     st.divider()
 
-    # ⟳ أوتو-ريفريش + إشعار
-    _ = st.experimental_autorefresh(interval=10_000, key="inter_notes_poll")
+    # ⟳ أوتو-ريفريش (بدون إسناد لقيمة راجعة) مع fallback
+    _autorefresh = getattr(st, "autorefresh", None) or getattr(st, "experimental_autorefresh", None)
+    if callable(_autorefresh):
+        _autorefresh(interval=10_000, key="inter_notes_poll")
+
+    # نحافظو على عدّاد غير المقروء في السيشن
     if "prev_unread_count" not in st.session_state:
         st.session_state.prev_unread_count = 0
 
+    # الصندوق الوارد
     unread_df = inter_notes_fetch_unread(current_employee)
     unread_count = len(unread_df)
 
-    if unread_count > st.session_state.prev_unread_count:
-        st.toast("📩 نوط جديدة وصْلتك!", icon="✉️")
-        play_sound_mp3()
-    st.session_state.prev_unread_count = unread_count
+    # إشعار + صوت وقت يزيد العدد
+    try:
+        if unread_count > st.session_state.prev_unread_count:
+            st.toast("📩 نوط جديدة وصْلتك!", icon="✉️")
+            play_sound_mp3()
+    finally:
+        st.session_state.prev_unread_count = unread_count
 
     st.markdown(f"### 📥 غير المقروء: **{unread_count}**")
     if unread_count == 0:
@@ -160,7 +172,9 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
         colA, colB = st.columns(2)
         with colA:
             if st.button("اعتبر الكل مقروء ✅", use_container_width=True):
-                inter_notes_mark_read(unread_df["note_id"].tolist()); st.success("تم التعليم كمقروء."); st.rerun()
+                inter_notes_mark_read(unread_df["note_id"].tolist())
+                st.success("تم التعليم كمقروء.")
+                st.rerun()
         with colB:
             selected_to_read = st.multiselect(
                 "اختار رسائل لتعليمها كمقروء",
@@ -168,9 +182,12 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 format_func=lambda nid: f"من {unread_df[unread_df['note_id']==nid]['sender'].iloc[0]} — {unread_df[unread_df['note_id']==nid]['message'].iloc[0][:30]}..."
             )
             if st.button("تعليم المحدد كمقروء", disabled=not selected_to_read, use_container_width=True):
-                inter_notes_mark_read(selected_to_read); st.success("تم التعليم كمقروء."); st.rerun()
+                inter_notes_mark_read(selected_to_read)
+                st.success("تم التعليم كمقروء.")
+                st.rerun()
 
     st.divider()
+
     # 🗂️ أرشيفي
     df_all_notes = inter_notes_fetch_all_df()
     mine = df_all_notes[(df_all_notes["receiver"] == current_employee) | (df_all_notes["sender"] == current_employee)].copy()
@@ -178,10 +195,12 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
     if mine.empty:
         st.caption("ما عندكش مراسلات مسجلة بعد.")
     else:
-        def fmt_ts(x):
-            try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
-            except: return x
-        mine["وقت"] = mine["timestamp"].apply(fmt_ts)
+        def _fmt_ts(x):
+            try:
+                return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+            except:
+                return x
+        mine["وقت"] = mine["timestamp"].apply(_fmt_ts)
         mine = mine[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
         st.dataframe(mine, use_container_width=True, height=280)
 
@@ -192,12 +211,15 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
         if df_all_notes.empty:
             st.caption("لا توجد مراسلات بعد.")
         else:
-            def fmt_ts2(x):
-                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
-                except: return x
-            df_all_notes["وقت"] = df_all_notes["timestamp"].apply(fmt_ts2)
+            def _fmt_ts2(x):
+                try:
+                    return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except:
+                    return x
+            df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
             disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
             st.dataframe(disp, use_container_width=True, height=320)
+
 
 # ============================ /InterNotes ============================
 
