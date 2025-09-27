@@ -116,7 +116,6 @@ def play_sound_mp3(path="notification.mp3"):
             unsafe_allow_html=True,
         )
     except FileNotFoundError:
-        # صامت إذا الملف غير موجود
         pass
 
 def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
@@ -140,20 +139,16 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
 
     st.divider()
 
-    # ⟳ أوتو-ريفريش (بدون إسناد لقيمة راجعة) مع fallback
     _autorefresh = getattr(st, "autorefresh", None) or getattr(st, "experimental_autorefresh", None)
     if callable(_autorefresh):
         _autorefresh(interval=10_000, key="inter_notes_poll")
 
-    # نحافظو على عدّاد غير المقروء في السيشن
     if "prev_unread_count" not in st.session_state:
         st.session_state.prev_unread_count = 0
 
-    # الصندوق الوارد
     unread_df = inter_notes_fetch_unread(current_employee)
     unread_count = len(unread_df)
 
-    # إشعار + صوت وقت يزيد العدد
     try:
         if unread_count > st.session_state.prev_unread_count:
             st.toast("📩 نوط جديدة وصْلتك!", icon="✉️")
@@ -188,7 +183,6 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
 
     st.divider()
 
-    # 🗂️ أرشيفي
     df_all_notes = inter_notes_fetch_all_df()
     mine = df_all_notes[(df_all_notes["receiver"] == current_employee) | (df_all_notes["sender"] == current_employee)].copy()
     st.markdown("### 🗂️ مراسلاتي")
@@ -204,7 +198,6 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
         mine = mine[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
         st.dataframe(mine, use_container_width=True, height=280)
 
-    # 🛡️ مراقبة الأدمِن
     if is_admin:
         st.divider()
         st.markdown("### 🛡️ لوحة مراقبة الأدمِن (كل المراسلات)")
@@ -217,11 +210,9 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 except:
                     return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", descending=False)
             st.dataframe(disp, use_container_width=True, height=320)
 
-
-# ============================ /InterNotes ============================
 
 # ---------------- Schemas ----------------
 EXPECTED_HEADERS = [
@@ -230,18 +221,15 @@ EXPECTED_HEADERS = [
     "Inscription","Employe","Tag"
 ]
 
-# Revenus
 FIN_REV_COLUMNS = [
     "Date", "Libellé", "Prix",
     "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total",
     "Echeance", "Reste",
     "Mode", "Employé", "Catégorie", "Note"
 ]
-# Dépenses
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
-# ---------------- Small helpers ----------------
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -249,7 +237,6 @@ def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = pd.Index(df.columns).astype(str)
     return df.loc[:, ~df.columns.duplicated(keep="first")]
 
-# ---------------- Finance helpers ----------------
 def _branch_passwords():
     try:
         b = st.secrets["branch_passwords"]
@@ -326,7 +313,6 @@ def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     vals = [str(row.get(col, "")) for col in header]
     ws.append_row(vals)
 
-# ---------------- Common helpers ----------------
 def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
@@ -397,14 +383,10 @@ def load_all_data():
 
     for ws in worksheets:
         title = ws.title.strip()
-        if title.endswith("_PAIEMENTS"):
-            continue
-        if title.startswith("_"):
-            continue
-        if title.startswith("Revenue ") or title.startswith("Dépense "):
-            continue
-        if title == INTER_NOTES_SHEET:
-            continue
+        if title.endswith("_PAIEMENTS"):    continue
+        if title.startswith("_"):           continue
+        if title.startswith("Revenue ") or title.startswith("Dépense "): continue
+        if title == INTER_NOTES_SHEET:      continue
 
         all_employes.append(title)
 
@@ -439,7 +421,6 @@ try:
 except Exception:
     pass
 
-# 🆕 زدنا "📝 نوط داخلية" كخيار ثالث
 tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)", "📝 نوط داخلية"], index=0)
 role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
 employee = None
@@ -501,7 +482,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     fin_title = fin_month_title(mois, kind, branch)
 
-    # قراءة + فلاتر
     df_fin = fin_read_df(client, SPREADSHEET_ID, fin_title, kind)
     df_view = df_fin.copy()
 
@@ -531,7 +511,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
-    # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
@@ -578,7 +557,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
             x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
 
-    # ====================== إضافة عملية جديدة ======================
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
 
@@ -676,7 +654,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                     )
                     st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
 
-        else:  # مصاريف
+        else:
             r1, r2, r3 = st.columns(3)
             montant   = r1.number_input("Montant", min_value=0.0, step=10.0)
             caisse    = r2.selectbox("Caisse_Source", ["Caisse_Admin","Caisse_Structure","Caisse_Inscription"])
@@ -859,7 +837,7 @@ if role == "موظف" and employee:
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
         st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
 
-    # Edit client
+    # ---------------- ✏️ تعديل بيانات عميل (مفاتيح ديناميكية) ----------------
     if not df_emp.empty:
         st.markdown("### ✏️ تعديل بيانات عميل")
         df_emp_edit = df_emp.copy()
@@ -871,54 +849,39 @@ if role == "موظف" and employee:
         if phone_choices:
             chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
             chosen_phone = phone_choices.get(chosen_key, "")
+            cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
 
-            # ======== (حلّ 1) تصفير الحقول عند تغيير الاختيار ========
-            if "last_edit_choice" not in st.session_state:
-                st.session_state["last_edit_choice"] = None
-            if st.session_state["last_edit_choice"] != chosen_key:
-                for k in [
-                    "edit_name_txt", "edit_phone_txt", "edit_formation_txt",
-                    "edit_ajout_dt", "edit_suivi_dt", "edit_insc_sel",
-                    "edit_remark_txt", "append_note_txt"
-                ]:
-                    if k in st.session_state:
-                        del st.session_state[k]
-                st.session_state["last_edit_choice"] = chosen_key
-                st.rerun()
-            # ======== /حلّ 1 ========
+            cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
+            cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
+            cur_formation = str(cur_row["Formation"]) if cur_row is not None else ""
+            cur_remark = str(cur_row.get("Remarque", "")) if cur_row is not None else ""
+            cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
+            cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
+            cur_insc  = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
 
-            # --- داخل قسم "✏️ تعديل بيانات عميل" بعد ما تحسب chosen_key و chosen_phone و cur_row ---
+            # مفاتيح ديناميكية حسب الهاتف المختار
+            name_key   = f"edit_name_txt::{chosen_phone}"
+            phone_key  = f"edit_phone_txt::{chosen_phone}"
+            form_key   = f"edit_formation_txt::{chosen_phone}"
+            ajout_key  = f"edit_ajout_dt::{chosen_phone}"
+            suivi_key  = f"edit_suivi_dt::{chosen_phone}"
+            insc_key   = f"edit_insc_sel::{chosen_phone}"
+            remark_key = f"edit_remark_txt::{chosen_phone}"
+            note_key   = f"append_note_txt::{chosen_phone}"
 
-cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
-cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
-cur_formation = str(cur_row["Formation"]) if cur_row is not None else ""
-cur_remark = str(cur_row.get("Remarque", "")) if cur_row is not None else ""
-cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
-cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
-cur_insc  = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
+            col1, col2 = st.columns(2)
+            with col1:
+                new_name = st.text_input("👤 الاسم و اللقب", value=cur_name, key=name_key)
+                new_phone_raw = st.text_input("📞 رقم الهاتف", value=cur_tel_raw, key=phone_key)
+                new_formation = st.text_input("📚 التكوين", value=cur_formation, key=form_key)
+            with col2:
+                new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key=ajout_key)
+                new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key=suivi_key)
+                new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key=insc_key)
 
-# مفاتيح ديناميكية حسب العميل المختار (الهاتف)
-name_key   = f"edit_name_txt::{chosen_phone}"
-phone_key  = f"edit_phone_txt::{chosen_phone}"
-form_key   = f"edit_formation_txt::{chosen_phone}"
-ajout_key  = f"edit_ajout_dt::{chosen_phone}"
-suivi_key  = f"edit_suivi_dt::{chosen_phone}"
-insc_key   = f"edit_insc_sel::{chosen_phone}"
-remark_key = f"edit_remark_txt::{chosen_phone}"
-note_key   = f"append_note_txt::{chosen_phone}"
+            new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
+            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
 
-col1, col2 = st.columns(2)
-with col1:
-    new_name = st.text_input("👤 الاسم و اللقب", value=cur_name, key=name_key)
-    new_phone_raw = st.text_input("📞 رقم الهاتف", value=cur_tel_raw, key=phone_key)
-    new_formation = st.text_input("📚 التكوين", value=cur_formation, key=form_key)
-with col2:
-    new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key=ajout_key)
-    new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key=suivi_key)
-    new_insc  = st.selectbox("🟢 التسجيل", ["Pas encore","Inscrit"], index=(1 if cur_insc=="oui" else 0), key=insc_key)
-
-new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
-extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
             def find_row_by_phone(ws, phone_digits: str) -> int | None:
                 values = ws.get_all_values()
                 if not values: return None
@@ -934,7 +897,8 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
                 try:
                     ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
                     row_idx = find_row_by_phone(ws, normalize_tn_phone(chosen_phone))
-                    if not row_idx: st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
+                    if not row_idx:
+                        st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
                     else:
                         col_map = {h: EXPECTED_HEADERS.index(h) + 1 for h in [
                             "Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"
@@ -944,12 +908,14 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
                         if not new_phone_norm.strip(): st.error("❌ رقم الهاتف إجباري."); st.stop()
                         phones_except_current = set(df_all["Téléphone_norm"]) - {normalize_tn_phone(chosen_phone)}
                         if new_phone_norm in phones_except_current: st.error("⚠️ الرقم موجود مسبقًا."); st.stop()
+
                         ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                         ws.update_cell(row_idx, col_map["Téléphone"], new_phone_norm)
                         ws.update_cell(row_idx, col_map["Formation"], new_formation.strip())
                         ws.update_cell(row_idx, col_map["Date ajout"], fmt_date(new_ajout))
                         ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
-                        ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc=="Inscrit" else "Pas encore")
+                        ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
+
                         if new_remark_full.strip() != cur_remark.strip():
                             ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
                         if extra_note.strip():
@@ -957,11 +923,12 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
                             stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
                             appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
                             ws.update_cell(row_idx, col_map["Remarque"], appended)
+
                         st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-    # Quick notes & Tag
+    # ---------------- Quick notes & Tag ----------------
     if not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة (سريعة)")
         scope_df = filtered_df if not filtered_df.empty else df_emp
@@ -1022,7 +989,7 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
-    # Add client
+    # ---------------- Add client ----------------
     st.markdown("### ➕ أضف عميل جديد")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
@@ -1047,7 +1014,7 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-    # Reassign + WhatsApp button
+    # ---------------- Reassign + WhatsApp ----------------
     st.markdown("### 🔁 نقل عميل بين الموظفين")
     if all_employes:
         colRA, colRB = st.columns(2)
@@ -1108,10 +1075,10 @@ extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني
             except Exception as e:
                 st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
 
-# ---------------- 🆕 صفحة "📝 نوط داخلية" ----------------
+# ---------------- 📝 نوط داخلية Tab ----------------
 if tab_choice == "📝 نوط داخلية":
     current_emp_name = (employee if (role == "موظف" and employee) else "Admin")
-    is_admin_user = (role == "أدمن")  # ينجم تشدّها مع admin_unlocked() لو تحب تقفل المراقبة
+    is_admin_user = (role == "أدمن")
     inter_notes_ui(
         current_employee=current_emp_name,
         all_employees=all_employes,
