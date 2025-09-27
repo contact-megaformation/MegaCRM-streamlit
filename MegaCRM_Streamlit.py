@@ -871,6 +871,22 @@ if role == "موظف" and employee:
         if phone_choices:
             chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
             chosen_phone = phone_choices.get(chosen_key, "")
+
+            # ======== (حلّ 1) تصفير الحقول عند تغيير الاختيار ========
+            if "last_edit_choice" not in st.session_state:
+                st.session_state["last_edit_choice"] = None
+            if st.session_state["last_edit_choice"] != chosen_key:
+                for k in [
+                    "edit_name_txt", "edit_phone_txt", "edit_formation_txt",
+                    "edit_ajout_dt", "edit_suivi_dt", "edit_insc_sel",
+                    "edit_remark_txt", "append_note_txt"
+                ]:
+                    if k in st.session_state:
+                        del st.session_state[k]
+                st.session_state["last_edit_choice"] = chosen_key
+                st.rerun()
+            # ======== /حلّ 1 ========
+
             cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
 
             cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
