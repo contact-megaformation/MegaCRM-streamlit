@@ -887,29 +887,38 @@ if role == "موظف" and employee:
                 st.rerun()
             # ======== /حلّ 1 ========
 
-            cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
+            # --- داخل قسم "✏️ تعديل بيانات عميل" بعد ما تحسب chosen_key و chosen_phone و cur_row ---
 
-            cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
-            cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
-            cur_formation = str(cur_row["Formation"]) if cur_row is not None else ""
-            cur_remark = str(cur_row.get("Remarque", "")) if cur_row is not None else ""
-            cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
-            cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
-            cur_insc  = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
+cur_name = str(cur_row["Nom & Prénom"]) if cur_row is not None else ""
+cur_tel_raw = str(cur_row["Téléphone"]) if cur_row is not None else ""
+cur_formation = str(cur_row["Formation"]) if cur_row is not None else ""
+cur_remark = str(cur_row.get("Remarque", "")) if cur_row is not None else ""
+cur_ajout = pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date() if cur_row is not None else date.today()
+cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
+cur_insc  = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
 
-            col1, col2 = st.columns(2)
-            with col1:
-                new_name = st.text_input("👤 الاسم و اللقب", value=cur_name, key="edit_name_txt")
-                new_phone_raw = st.text_input("📞 رقم الهاتف", value=cur_tel_raw, key="edit_phone_txt")
-                new_formation = st.text_input("📚 التكوين", value=cur_formation, key="edit_formation_txt")
-            with col2:
-                new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key="edit_ajout_dt")
-                new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key="edit_suivi_dt")
-                new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key="edit_insc_sel")
+# مفاتيح ديناميكية حسب العميل المختار (الهاتف)
+name_key   = f"edit_name_txt::{chosen_phone}"
+phone_key  = f"edit_phone_txt::{chosen_phone}"
+form_key   = f"edit_formation_txt::{chosen_phone}"
+ajout_key  = f"edit_ajout_dt::{chosen_phone}"
+suivi_key  = f"edit_suivi_dt::{chosen_phone}"
+insc_key   = f"edit_insc_sel::{chosen_phone}"
+remark_key = f"edit_remark_txt::{chosen_phone}"
+note_key   = f"append_note_txt::{chosen_phone}"
 
-            new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key="edit_remark_txt")
-            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key="append_note_txt")
+col1, col2 = st.columns(2)
+with col1:
+    new_name = st.text_input("👤 الاسم و اللقب", value=cur_name, key=name_key)
+    new_phone_raw = st.text_input("📞 رقم الهاتف", value=cur_tel_raw, key=phone_key)
+    new_formation = st.text_input("📚 التكوين", value=cur_formation, key=form_key)
+with col2:
+    new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key=ajout_key)
+    new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key=suivi_key)
+    new_insc  = st.selectbox("🟢 التسجيل", ["Pas encore","Inscrit"], index=(1 if cur_insc=="oui" else 0), key=insc_key)
 
+new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
+extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
             def find_row_by_phone(ws, phone_digits: str) -> int | None:
                 values = ws.get_all_values()
                 if not values: return None
