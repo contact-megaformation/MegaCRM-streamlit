@@ -1,16 +1,12 @@
-# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف + Pré-Inscription منفصلة + 📝 نوط داخلية
-# =================================================================================================
-# - CRM كامل: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة، نقل + زر WhatsApp
-# - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة)
-# - تبويب "مداخيل (MB/Bizerte)":
-#     Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل)
-#              + Montant_Total=(Admin+Structure) + Echeance + Reste + Alert تلقائي
-#     Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
-# - ملخّص شهري تفصيلي: يظهر للأدمن فقط
-# - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
-# - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
+# MegaCRM_Streamlit_App_PRO.py — CRM + "مداخيل (MB/Bizerte)" + Pré-Inscription + 📝 نوط داخلية — واجهة احترافية
+# ===============================================================================================================
+# - نفس منطق تطبيقك الأصلي مع تحسين واجهة فقط: سكين احترافي، كروت KPIs، تنظيم أقسام، جداول داخل Cards
+# - ما مسسناش اللوجيك: الموظفين/الأدمن/المداخيل/المصاريف/النقل/واتساب/النوط... الكل باقٍ كما هو
+# - ينجم يتبدّل الثيم من :root متاع CSS (accent/gradient...)
+#
+# ملاحظـة: لو عندك logo.png في نفس المجلد يظهر في الـSidebar
 
-import json, time, urllib.parse, base64, uuid
+import json, time, urllib.parse, base64, uuid, re
 import streamlit as st
 import pandas as pd
 import gspread
@@ -20,15 +16,114 @@ from PIL import Image
 
 # ---------------- Page config ----------------
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
-st.markdown(
-    """
-    <div style='text-align:center;'>
-        <h1 style='color:#333; margin-top: 8px;'>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
-    </div>
-    <hr>
-    """,
-    unsafe_allow_html=True
-)
+
+# =============== 🎨 UI SKIN (Ready-to-use) ===============
+def inject_pro_ui():
+    st.markdown("""
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&display=swap');
+      :root{
+        --bg:#0b1220; --card:#121a2b; --muted:#8ea2c0; --text:#e9eef6;
+        --accent:#4f9cff; --accent-2:#00d4ff; --danger:#ff6b6b; --success:#38d39f;
+        --warning:#ffbf47; --radius:14px;
+      }
+      html, body, [data-testid="stAppViewContainer"]{
+        background: linear-gradient(180deg, #0b1220 0%, #0f172a 100%) !important;
+        color: var(--text) !important;
+        font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, "Noto Sans", "Liberation Sans", sans-serif !important;
+      }
+      [data-testid="stSidebar"]{
+        background: #0e1628 !important; border-right: 1px solid rgba(255,255,255,0.06);
+      }
+      .stButton>button, .stDownloadButton>button{
+        border-radius: 12px !important;
+        background: linear-gradient(135deg, var(--accent), var(--accent-2)) !important;
+        color: white !important; border: 0 !important; padding: 0.6rem 1rem !important; font-weight: 600 !important;
+        box-shadow: 0 6px 20px rgba(79,156,255,0.25) !important;
+      }
+      .stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>div>div,
+      .stDateInput>div>div>input, .stNumberInput input{
+        background: #0f1a30 !important; color: var(--text) !important; border-radius: 12px !important; border: 1px solid rgba(255,255,255,0.08) !important;
+      }
+      details{
+        background: var(--card) !important; color: var(--text) !important; border-radius: var(--radius) !important;
+        border: 1px solid rgba(255,255,255,0.06) !important; padding: 2px 8px !important;
+      }
+      details>summary{ font-weight:600 !important; }
+      .stDataFrame{
+        background: var(--card) !important; border-radius: var(--radius) !important;
+        border: 1px solid rgba(255,255,255,0.06) !important;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.35) !important; overflow: hidden !important;
+      }
+      .topbar{
+        border-radius: 18px; padding: 18px 22px; background: linear-gradient(135deg, rgba(79,156,255,0.16), rgba(0,212,255,0.12));
+        border: 1px solid rgba(255,255,255,0.10); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.05), 0 15px 35px rgba(0,0,0,0.35);
+        margin-bottom: 14px;
+      }
+      .topbar h1{ margin:0; font-size: 26px; letter-spacing:.3px;}
+      .topbar p{ margin:8px 0 0; color: var(--muted); }
+      .section{ background: var(--card); border-radius: var(--radius); border: 1px solid rgba(255,255,255,0.06);
+        padding: 14px 16px; margin: 10px 0 18px; }
+      .section h3{ margin: 4px 0 12px; }
+      .kpi-grid{ display:grid; grid-template-columns: repeat(5, minmax(140px,1fr)); gap:12px; }
+      .kpi{
+        background: linear-gradient(180deg, #111a2b, #0e1830);
+        border-radius: 14px; padding: 14px; border: 1px solid rgba(255,255,255,0.06);
+        box-shadow: 0 10px 24px rgba(0,0,0,.35);
+      }
+      .kpi .label{ color: var(--muted); font-size: 12px; }
+      .kpi .value{ font-size: 22px; font-weight: 700; margin-top: 6px; letter-spacing: .2px; }
+      .kpi.ok   { border-color: rgba(56,211,159,.45); }
+      .kpi.warn { border-color: rgba(255,191,71,.45); }
+      .kpi.dng  { border-color: rgba(255,107,107,.45); }
+      .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid rgba(255,255,255,0.12); color: var(--text); }
+      .pill.blue{ background: rgba(79,156,255,.16); border-color: rgba(79,156,255,.35); }
+      .pill.green{ background: rgba(56,211,159,.16); border-color: rgba(56,211,159,.35); }
+      .pill.orange{ background: rgba(255,191,71,.16); border-color: rgba(255,191,71,.35); }
+      .pill.red{ background: rgba(255,107,107,.16); border-color: rgba(255,107,107,.35); }
+      .muted{ color: var(--muted); font-size: 13px; }
+    </style>
+    """, unsafe_allow_html=True)
+
+def ui_topbar(title:str, subtitle:str=""):
+    st.markdown(f"""
+       <div class="topbar">
+         <h1>📊 {title}</h1>
+         <p>{subtitle}</p>
+       </div>
+    """, unsafe_allow_html=True)
+
+def ui_section(title:str, icon:str="📦"):
+    st.markdown(f"""<div class="section"><h3>{icon} {title}</h3>""", unsafe_allow_html=True)
+
+def ui_section_end():
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def ui_kpis(items):
+    st.markdown('<div class="kpi-grid">', unsafe_allow_html=True)
+    for it in items:
+        tone = it.get("tone","")
+        st.markdown(f"""
+          <div class="kpi {tone}">
+            <div class="label">{it.get('label','')}</div>
+            <div class="value">{it.get('value','')}</div>
+          </div>
+        """, unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+def ui_badge(text, tone="blue"):
+    st.markdown(f'<span class="pill {tone}">{text}</span>', unsafe_allow_html=True)
+
+# call once
+inject_pro_ui()
+ui_topbar("CRM MEGA FORMATION — إدارة العملاء", "إدارة العملاء • المداخيل والمصاريف • نوط داخلية")
+
+# 🔎 بحث عام (placeholder — اربطه لاحقًا بالـDataFrames كما تحب)
+top_col1, top_col2 = st.columns([3,1])
+with top_col1:
+    global_q = st.text_input("ابحث سريعًا...", placeholder="اكتب اسم / هاتف (216XXXXXXXX أو 8 أرقام) / تكوين ...")
+with top_col2:
+    st.caption("")
 
 # ---------------- Google Sheets Auth ----------------
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -50,7 +145,7 @@ def make_client_and_sheet_id():
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
 # ============================ 🆕 InterNotes (نوط داخلية) ============================
-INTER_NOTES_SHEET = "InterNotes"  # تُنشأ تلقائيًا لو مش موجودة
+INTER_NOTES_SHEET = "InterNotes"
 INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
 
 def inter_notes_open_ws():
@@ -119,9 +214,8 @@ def play_sound_mp3(path="notification.mp3"):
         pass
 
 def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
-    st.subheader("📝 النوط الداخلية")
+    ui_section("📝 النوط الداخلية", "📝")
 
-    # ✍️ إرسال
     with st.expander("✍️ إرسال نوط لموظف آخر", expanded=True):
         col1, col2 = st.columns([1,2])
         with col1:
@@ -136,8 +230,6 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 st.success("تم الإرسال 👌")
             else:
                 st.error(f"تعذّر الإرسال: {info}")
-
-    st.divider()
 
     _autorefresh = getattr(st, "autorefresh", None) or getattr(st, "experimental_autorefresh", None)
     if callable(_autorefresh):
@@ -210,9 +302,10 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 except:
                     return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", descending=False)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
             st.dataframe(disp, use_container_width=True, height=320)
 
+    ui_section_end()
 
 # ---------------- Schemas ----------------
 EXPECTED_HEADERS = [
@@ -267,11 +360,8 @@ def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
 
 def _to_num_series(s):
     return (
-        s.astype(str)
-         .str.replace(" ", "", regex=False)
-         .str.replace(",", ".", regex=False)
-         .pipe(pd.to_numeric, errors="coerce")
-         .fillna(0.0)
+        s.astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False)
+         .pipe(pd.to_numeric, errors="coerce").fillna(0.0)
     )
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
@@ -455,8 +545,10 @@ if role == "أدمن":
     admin_lock_ui()
 
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
+FIN_MONTHS_LABEL = "💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)"
+
 if tab_choice == "مداخيل (MB/Bizerte)":
-    st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
+    ui_section(FIN_MONTHS_LABEL, "💸")
 
     with st.sidebar:
         st.markdown("---")
@@ -502,63 +594,63 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                 m |= df_view[col].fillna("").astype(str).str.contains(search, case=False, na=False)
             df_view = df_view[m]
 
-    st.subheader(f"📄 {fin_title}")
+    # جدول العمليات
+    ui_section(f"{'💰' if kind=='Revenus' else '🧾'} {fin_title}", "🗂️")
     df_view = safe_unique_columns(df_view)
-
     if kind == "Revenus":
         cols_show = [c for c in ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Alert","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     else:
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
+    ui_section_end()
 
+    # Admin Summary KPIs
     if role == "أدمن" and admin_unlocked():
-        with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
-            rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
-            dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
+        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
 
-            sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
-            sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
-            sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
-            sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
-            sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
+        sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
 
-            if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
-                dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin",        "Montant"].sum()
-                dep_struct = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure",    "Montant"].sum()
-                dep_inscr  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Inscription",  "Montant"].sum()
-            else:
-                dep_admin = dep_struct = dep_inscr = 0.0
+        if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
+            dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin",        "Montant"].sum()
+            dep_struct = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure",    "Montant"].sum()
+            dep_inscr  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Inscription",  "Montant"].sum()
+        else:
+            dep_admin = dep_struct = dep_inscr = 0.0
 
-            reste_admin    = float(sum_admin)  - float(dep_admin)
-            reste_struct   = float(sum_struct) - float(dep_struct)
-            reste_inscr    = float(sum_preins) - float(dep_inscr)
+        reste_admin    = float(sum_admin)  - float(dep_admin)
+        reste_struct   = float(sum_struct) - float(dep_struct)
+        reste_inscr    = float(sum_preins) - float(dep_inscr)
 
-            st.markdown("#### 🔹 Admin")
-            a1, a2, a3 = st.columns(3)
-            a1.metric("مداخيل Admin",   f"{sum_admin:,.2f}")
-            a2.metric("مصاريف Admin",   f"{dep_admin:,.2f}")
-            a3.metric("Reste Admin",     f"{reste_admin:,.2f}")
-
-            st.markdown("#### 🔹 Structure")
-            s1, s2, s3 = st.columns(3)
-            s1.metric("مداخيل Structure", f"{sum_struct:,.2f}")
-            s2.metric("مصاريف Structure", f"{dep_struct:,.2f}")
-            s3.metric("Reste Structure",   f"{reste_struct:,.2f}")
-
-            st.markdown("#### 🔹 Inscription (Pré-Inscription)")
-            i1, i2, i3 = st.columns(3)
-            i1.metric("مداخيل Inscription", f"{sum_preins:,.2f}")
-            i2.metric("مصاريف Inscription", f"{dep_inscr:,.2f}")
-            i3.metric("Reste Inscription",   f"{reste_inscr:,.2f}")
-
-            st.markdown("#### 🔸 معلومات إضافية")
-            x1, x2, x3 = st.columns(3)
-            x1.metric("Total Admin+Structure (مداخيل فقط)", f"{sum_total_as:,.2f}")
-            x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
-            x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
+        ui_section("ملخّص الفرع للشهر — Admin", "🧮")
+        ui_kpis([
+            {"label":"مداخيل Admin", "value": f"{sum_admin:,.2f}", "tone":"ok"},
+            {"label":"مصاريف Admin", "value": f"{dep_admin:,.2f}", "tone":"warn"},
+            {"label":"Reste Admin",   "value": f"{reste_admin:,.2f}", "tone":"ok" if reste_admin>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"مداخيل Structure", "value": f"{sum_struct:,.2f}", "tone":"ok"},
+            {"label":"مصاريف Structure", "value": f"{dep_struct:,.2f}", "tone":"warn"},
+            {"label":"Reste Structure",   "value": f"{reste_struct:,.2f}", "tone":"ok" if reste_struct>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"مداخيل Inscription", "value": f"{sum_preins:,.2f}", "tone":"ok"},
+            {"label":"مصاريف Inscription", "value": f"{dep_inscr:,.2f}", "tone":"warn"},
+            {"label":"Reste Inscription",   "value": f"{reste_inscr:,.2f}", "tone":"ok" if reste_inscr>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"Total A+S (مداخيل)", "value": f"{sum_total_as:,.2f}", "tone":"blue"},
+            {"label":"Total مصاريف", "value": f"{(dep_admin + dep_struct + dep_inscr):, .2f}", "tone":"warn"},
+            {"label":"إجمالي المتبقّي بالدروس", "value": f"{sum_reste_due:,.2f}", "tone":"orange"},
+        ])
+        ui_section_end()
 
     st.markdown("---")
-    st.markdown("### ➕ إضافة عملية جديدة")
+    ui_section("➕ إضافة عملية جديدة", "➕")
 
     selected_client_info = None
     client_default_lib = ""
@@ -686,6 +778,8 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                     )
                     st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
 
+    ui_section_end()
+
 # ---------------- CRM: مشتقّات وعرض ----------------
 df_all = df_all.copy()
 if not df_all.empty:
@@ -710,7 +804,7 @@ else:
     df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
 
 # ---------------- Dashboard ----------------
-st.subheader("لوحة إحصائيات سريعة")
+ui_section("لوحة الإحصائيات السريعة", "📈")
 df_dash = df_all.copy()
 if df_dash.empty:
     st.info("ما فماش داتا للعرض.")
@@ -730,12 +824,14 @@ else:
     registered_total = int((df_dash["Inscription_norm"] == "oui").sum())
     rate = round((registered_total / total_clients) * 100, 2) if total_clients else 0.0
 
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: st.metric("👥 إجمالي العملاء", f"{total_clients}")
-    with c2: st.metric("🆕 المضافون اليوم", f"{added_today}")
-    with c3: st.metric("✅ المسجّلون اليوم", f"{registered_today}")
-    with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
-    with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+    ui_kpis([
+        {"label":"👥 إجمالي العملاء","value": f"{total_clients}", "tone":"ok"},
+        {"label":"🆕 المضافون اليوم","value": f"{added_today}", "tone": "blue"},
+        {"label":"✅ المسجّلون اليوم","value": f"{registered_today}", "tone": "ok"},
+        {"label":"🚨 التنبيهات الحالية","value": f"{alerts_now}", "tone": "warn" if alerts_now else "ok"},
+        {"label":"📈 نسبة التسجيل الإجمالية","value": f"{rate}%", "tone": "ok" if rate>=25 else "warn"},
+    ])
+ui_section_end()
 
 # ---------------- Stats per employee ----------------
 df_stats = df_all.copy()
@@ -764,11 +860,13 @@ grp_base = (
 )
 grp_base["% تسجيل"] = ((grp_base["Inscrits"] / grp_base["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
 grp_base = grp_base.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
-st.markdown("#### حسب الموظّف")
+
+ui_section("حسب الموظّف", "🧑‍💼")
 st.dataframe(grp_base, use_container_width=True)
+ui_section_end()
 
 # ---------------- Global phone search ----------------
-st.subheader("🔎 بحث عام برقم الهاتف")
+ui_section("🔎 بحث عام برقم الهاتف", "🔎")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
 if global_phone.strip():
     q_norm = normalize_tn_phone(global_phone)
@@ -787,7 +885,8 @@ if global_phone.strip():
             .applymap(mark_alert_cell, subset=["Alerte"])
         )
         st.dataframe(styled_global, use_container_width=True)
-        st.markdown("---")
+st.markdown("---")
+ui_section_end()
 
 # ---------------- Employee area ----------------
 if role == "موظف" and employee:
@@ -807,43 +906,45 @@ if role == "موظف" and employee:
     else:
         st.warning("⚠️ لا يوجد أي عملاء بعد."); filtered_df = pd.DataFrame()
 
+    def render_table(df_disp: pd.DataFrame, title="📋 قائمة العملاء"):
+        ui_section(title, "📋")
+        if df_disp.empty:
+            st.info("لا توجد بيانات.")
+        else:
+            _df = df_disp.copy()
+            _df["Alerte"] = _df.get("Alerte_view", "")
+            display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
+            styled = (
+                _df[display_cols]
+                .style.apply(highlight_inscrit_row, axis=1)
+                .applymap(mark_alert_cell, subset=["Alerte"])
+                .applymap(color_tag, subset=["Tag"])
+            )
+            st.dataframe(styled, use_container_width=True)
+        ui_section_end()
+
     if not filtered_df.empty:
         pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
-        st.markdown("### 📊 متابعتك")
-        st.metric("⏳ مضافين بلا ملاحظات", int(pending_mask.sum()))
+        ui_badge(f"⏳ مضافين بلا ملاحظات: {int(pending_mask.sum())}", "orange")
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
-    def render_table(df_disp: pd.DataFrame):
-        if df_disp.empty: st.info("لا توجد بيانات."); return
-        _df = df_disp.copy()
-        _df["Alerte"] = _df.get("Alerte_view", "")
-        display_cols = [c for c in EXPECTED_HEADERS if c in _df.columns]
-        styled = (
-            _df[display_cols]
-            .style.apply(highlight_inscrit_row, axis=1)
-            .applymap(mark_alert_cell, subset=["Alerte"])
-            .applymap(color_tag, subset=["Tag"])
-        )
-        st.dataframe(styled, use_container_width=True)
-
-    st.markdown("### 📋 قائمة العملاء")
-    render_table(filtered_df)
+    render_table(filtered_df, "📋 قائمة العملاء")
 
     if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
         _df = filtered_df.copy(); _df["Alerte"] = _df.get("Alerte_view", "")
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
-        st.markdown("### 🚨 عملاء مع تنبيهات"); render_table(alerts_df)
+        render_table(alerts_df, "🚨 عملاء مع تنبيهات")
 
-    # ---------------- ✏️ تعديل بيانات عميل (مفاتيح ديناميكية) ----------------
+    # ✏️ تعديل بيانات عميل
     if not df_emp.empty:
-        st.markdown("### ✏️ تعديل بيانات عميل")
+        ui_section("✏️ تعديل بيانات عميل", "✏️")
         df_emp_edit = df_emp.copy()
         df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
         phone_choices = {
-            f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+            f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone'])}": row["Téléphone_norm"]
             for i, row in df_emp_edit.iterrows() if str(row["Téléphone"]).strip() != ""
         }
         if phone_choices:
@@ -859,7 +960,6 @@ if role == "موظف" and employee:
             cur_suivi = pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if cur_row is not None and str(cur_row["Date de suivi"]).strip() else date.today()
             cur_insc  = str(cur_row["Inscription"]).strip().lower() if cur_row is not None else ""
 
-            # مفاتيح ديناميكية حسب الهاتف المختار
             name_key   = f"edit_name_txt::{chosen_phone}"
             phone_key  = f"edit_phone_txt::{chosen_phone}"
             form_key   = f"edit_formation_txt::{chosen_phone}"
@@ -927,10 +1027,11 @@ if role == "موظف" and employee:
                         st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
+        ui_section_end()
 
-    # ---------------- Quick notes & Tag ----------------
+    # 📝 ملاحظة سريعة + Tag
     if not df_emp.empty:
-        st.markdown("### 📝 أضف ملاحظة (سريعة)")
+        ui_section("📝 أضف ملاحظة (سريعة)", "📝")
         scope_df = filtered_df if not filtered_df.empty else df_emp
         scope_df = scope_df.copy(); scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
         tel_to_update_key = st.selectbox(
@@ -961,8 +1062,9 @@ if role == "موظف" and employee:
                         st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
+        ui_section_end()
 
-        st.markdown("### 🎨 اختر لون/Tag للعميل")
+        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
         tel_color_key = st.selectbox(
             "اختر العميل",
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
@@ -988,9 +1090,10 @@ if role == "موظف" and employee:
                     st.success("✅ تم التلوين"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
+        ui_section_end()
 
-    # ---------------- Add client ----------------
-    st.markdown("### ➕ أضف عميل جديد")
+    # ➕ أضف عميل جديد
+    ui_section("➕ أضف عميل جديد", "➕")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
         with col1:
@@ -1013,9 +1116,10 @@ if role == "موظف" and employee:
                 st.success("✅ تم إضافة العميل"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ أثناء الإضافة: {e}")
+    ui_section_end()
 
-    # ---------------- Reassign + WhatsApp ----------------
-    st.markdown("### 🔁 نقل عميل بين الموظفين")
+    # 🔁 نقل + WhatsApp
+    ui_section("🔁 نقل عميل بين الموظفين", "🔁")
     if all_employes:
         colRA, colRB = st.columns(2)
         with colRA:
@@ -1055,8 +1159,9 @@ if role == "موظف" and employee:
                         st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
+    ui_section_end()
 
-    st.markdown("### 💬 تواصل WhatsApp")
+    ui_section("💬 تواصل WhatsApp", "💬")
     if not df_emp.empty:
         wa_pick = st.selectbox(
             "اختر العميل لفتح واتساب",
@@ -1074,6 +1179,7 @@ if role == "موظف" and employee:
                 st.info("اضغط على الرابط لفتح واتساب في نافذة/تبويب جديد.")
             except Exception as e:
                 st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
+    ui_section_end()
 
 # ---------------- 📝 نوط داخلية Tab ----------------
 if tab_choice == "📝 نوط داخلية":
@@ -1087,7 +1193,7 @@ if tab_choice == "📝 نوط داخلية":
 
 # ---------------- Admin Page ----------------
 if role == "أدمن":
-    st.markdown("## 👑 لوحة الأدمِن")
+    ui_section("👑 لوحة الأدمِن", "👑")
     if not admin_unlocked():
         st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح الصفحة.")
     else:
@@ -1145,3 +1251,4 @@ if role == "أدمن":
                     st.error(f"❌ خطأ: {e}")
 
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
+    ui_section_end()
