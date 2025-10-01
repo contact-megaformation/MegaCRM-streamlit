@@ -818,7 +818,7 @@ if global_phone.strip():
 st.markdown("---"); ui_section_end()
 
 # ---------------- Employee area ----------------
-if role == "موظف" و employee:
+if role == "موظف" and employee:
     _emp_lock_ui(employee)
     if not _emp_unlocked(employee): st.info("🔒 أدخل كلمة سرّ الموظّف في أعلى هذا القسم لفتح الورقة."); st.stop()
 
