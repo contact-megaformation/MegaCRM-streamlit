@@ -1,9 +1,11 @@
 # MegaCRM_Streamlit_App_PRO_Light.py
 # ===============================================================================================================
-# CRM + "مداخيل (MB/Bizerte)" + Pré-Inscription + 📝 نوط داخلية — واجهة فاتحة احترافية + أزرار حقيقية (3D)
-# - نفس منطق تطبيقك السابق (الموظفين/الأدمن/المداخيل/المصاريف/النوط/النقل/واتساب...)
-# - تغييرات أساسية: ثيم فاتح، خط واضح، كروت KPIs، تنظيم الأقسام، جداول داخل Cards
-# - أزرار مع إحساس "زرّ فعلي": حدود واضحة، ظلّ، hover، active (ينزل شوية)، focus ring
+# تغييرات النسخة:
+# - ثيم فاتح + أزرار 3D واقعية
+# - إصلاح عدّاد "مضافين بلا ملاحظات": يستثني المسجّلين (Inscrit)
+# - تسجيل اسم الموظّف الذي يقوم بنقل عميل داخل "Remarque" مع طابع زمني
+# - للأدمِن: تجميع شهري للمبالغ (Total A+S / مصاريف / Reste / مبلغ المسجّلين)
+# - حذف قسم "📝 أضف ملاحظة (سريعة)"
 
 import json, time, urllib.parse, base64, uuid, re
 import streamlit as st
@@ -26,7 +28,6 @@ def inject_pro_ui():
         --border:#e7ecf3;     --accent:#2563eb;     --accent-2:#3b82f6;   --accent-3:#1d4ed8;
         --success:#16a34a;    --warning:#d97706;    --danger:#dc2626;     --radius:14px;
       }
-
       html, body, [data-testid="stAppViewContainer"]{
         background: var(--bg) !important;
         color: var(--text) !important;
@@ -36,7 +37,6 @@ def inject_pro_ui():
       [data-testid="stSidebar"]{
         background: #fbfdff !important; border-right: 1px solid var(--border) !important;
       }
-
       /* ---------- Real Buttons (3D look) ---------- */
       .stButton>button, .stDownloadButton>button{
         position: relative !important;
@@ -44,14 +44,14 @@ def inject_pro_ui():
         border-radius: 12px !important;
         background: linear-gradient(180deg, var(--accent-2), var(--accent)) !important;
         color: #fff !important;
-        border: 1px solid #1e40af !important; /* واضح */
+        border: 1px solid #1e40af !important;
         padding: 0.65rem 1.1rem !important;
         font-weight: 800 !important;
         letter-spacing: .2px !important;
         box-shadow:
-          0 2px 0 #153e94 inset,               /* حافة داخلية */
-          0 8px 18px rgba(37, 99, 235, 0.25),  /* ظل خارجي */
-          0 0 0 1px rgba(255,255,255,0.6) inset; /* لمعان خفيف */
+          0 2px 0 #153e94 inset,
+          0 8px 18px rgba(37, 99, 235, 0.25),
+          0 0 0 1px rgba(255,255,255,0.6) inset;
         transition: transform .06s ease, box-shadow .12s ease, filter .15s ease;
       }
       .stButton>button:hover, .stDownloadButton>button:hover{
@@ -62,7 +62,7 @@ def inject_pro_ui():
           0 0 0 1px rgba(255,255,255,0.65) inset;
       }
       .stButton>button:active, .stDownloadButton>button:active{
-        transform: translateY(1px); /* ينزل شوية */
+        transform: translateY(1px);
         box-shadow:
           0 1px 0 #153e94 inset,
           0 6px 14px rgba(37,99,235,0.22),
@@ -73,14 +73,8 @@ def inject_pro_ui():
         box-shadow:
           0 2px 0 #153e94 inset,
           0 8px 18px rgba(37,99,235,0.25),
-          0 0 0 3px rgba(37,99,235,0.35) !important; /* حلقة تركيز */
+          0 0 0 3px rgba(37,99,235,0.35) !important;
       }
-      /* لون بديل (ثانوي) حسب النص — hack بسيط */
-      .stButton>button:has(span:contains("إلغاء")), .stButton>button:has(span:contains("Cancel")){
-        background: linear-gradient(180deg, #e5e7eb, #d1d5db) !important; color:#111827 !important; border:1px solid #9ca3af !important;
-        box-shadow: 0 2px 0 #9ca3af inset, 0 8px 18px rgba(0,0,0,0.06), 0 0 0 1px rgba(255,255,255,0.7) inset !important;
-      }
-
       /* Inputs */
       .stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>div>div,
       .stDateInput>div>div>input, .stNumberInput input{
@@ -89,20 +83,11 @@ def inject_pro_ui():
         box-shadow: 0 1px 0 rgba(0,0,0,0.02) inset !important;
       }
       .stTextArea textarea{ min-height: 110px !important; }
-
-      /* Expander */
-      details{
-        background: var(--card) !important; color: var(--text) !important;
-        border-radius: var(--radius) !important; border: 1px solid var(--border) !important; padding: 2px 8px !important;
-      }
-      details>summary{ font-weight:700 !important; }
-
       /* DataFrame container */
       .stDataFrame{
         background: var(--card) !important; border-radius: var(--radius) !important; border: 1px solid var(--border) !important;
         box-shadow: 0 10px 24px rgba(16, 24, 40, 0.06) !important; overflow: hidden !important;
       }
-
       /* Topbar */
       .topbar{
         border-radius: 18px; padding: 18px 22px; background: linear-gradient(135deg, #ffffff, #f3f7ff);
@@ -110,14 +95,12 @@ def inject_pro_ui():
       }
       .topbar h1{ margin:0; font-size: 26px; letter-spacing:.2px; color: var(--text);}
       .topbar p{ margin:8px 0 0; color: var(--muted); }
-
       /* Section/Card */
       .section{
         background: var(--card); border-radius: var(--radius); border: 1px solid var(--border);
         padding: 14px 16px; margin: 10px 0 18px; box-shadow: 0 8px 20px rgba(16,24,40,0.06);
       }
       .section h3{ margin: 4px 0 12px; color: var(--text); }
-
       /* KPI Cards */
       .kpi-grid{ display:grid; grid-template-columns: repeat(5, minmax(140px,1fr)); gap:12px; }
       .kpi{ background: #ffffff; border-radius: 14px; padding: 14px; border: 1px solid var(--border); box-shadow: 0 8px 20px rgba(16,24,40,0.06); }
@@ -126,8 +109,7 @@ def inject_pro_ui():
       .kpi.ok   { border-color: rgba(34,197,94,.45); }
       .kpi.warn { border-color: rgba(217,119,6,.35); }
       .kpi.dng  { border-color: rgba(220,38,38,.40); }
-
-      /* Pills/Badges */
+      /* Pills */
       .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); color: var(--text); background:#fff; }
       .pill.blue{border-color:#bfdbfe; background:#eff6ff;} .pill.green{border-color:#bbf7d0; background:#ecfdf5;}
       .pill.orange{border-color:#fed7aa; background:#fff7ed;} .pill.red{border-color:#fecaca; background:#fef2f2;}
@@ -162,7 +144,7 @@ def ui_badge(text, tone="blue"):
 inject_pro_ui()
 ui_topbar("CRM MEGA FORMATION — إدارة العملاء", "إدارة العملاء • المداخيل والمصاريف • نوط داخلية")
 
-# 🔎 بحث عام (placeholder — يمكنك ربطه لاحقًا بأي DataFrame)
+# 🔎 بحث عام (placeholder)
 top_col1, top_col2 = st.columns([3,1])
 with top_col1:
     global_q = st.text_input("ابحث سريعًا...", placeholder="اكتب اسم / هاتف (216XXXXXXXX أو 8 أرقام) / تكوين ...")
@@ -402,6 +384,108 @@ def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription", "")).strip().lower()
     return ['background-color: #ecfdf5' if insc in ("inscrit","oui") else '' for _ in row.index]
 
+# ---------------- Helpers إضافية للتجميع الشهري والمسجّلين ----------------
+def _normalize_name(s: str) -> str:
+    return re.sub(r"\s+", " ", str(s or "")).strip().lower()
+
+def extract_client_from_note(note: str) -> str:
+    """يستخرج اسم العميل من Note بالصيغة: Client: <name> / <formation>"""
+    if not note: return ""
+    m = re.search(r"client\s*:\s*([^/\n\r]+)", str(note), flags=re.IGNORECASE)
+    return _normalize_name(m.group(1)) if m else ""
+
+@st.cache_data(ttl=600)
+def collect_all_revenus(client, sheet_id: str) -> pd.DataFrame:
+    sh = client.open_by_key(sheet_id)
+    dfs = []
+    for ws in sh.worksheets():
+        title = ws.title.strip()
+        if title.startswith("Revenue "):
+            df = fin_read_df(client, sheet_id, title, "Revenus")
+            if not df.empty:
+                df["__sheet_title"] = title
+                dfs.append(df)
+    if not dfs:
+        return pd.DataFrame()
+    big = pd.concat(dfs, ignore_index=True)
+    big["Month"] = pd.to_datetime(big.get("Date"), errors="coerce").dt.strftime("%Y-%m")
+    big["Client_extracted"] = big.get("Note", "").apply(extract_client_from_note)
+    return big
+
+@st.cache_data(ttl=600)
+def collect_all_depenses(client, sheet_id: str) -> pd.DataFrame:
+    sh = client.open_by_key(sheet_id)
+    dfs = []
+    for ws in sh.worksheets():
+        title = ws.title.strip()
+        if title.startswith("Dépense "):
+            df = fin_read_df(client, sheet_id, title, "Dépenses")
+            if not df.empty:
+                df["__sheet_title"] = title
+                dfs.append(df)
+    if not dfs:
+        return pd.DataFrame()
+    big = pd.concat(dfs, ignore_index=True)
+    big["Month"] = pd.to_datetime(big.get("Date"), errors="coerce").dt.strftime("%Y-%m")
+    return big
+
+def build_monthly_totals(df_all_crm: pd.DataFrame) -> pd.DataFrame:
+    """يرجّع جدول شهري فيه:
+       Month | Total A+S (مداخيل) | Total مصاريف | إجمالي Reste بالدروس | إجمالي مبلغ المسجّلين
+    """
+    rev = collect_all_revenus(client, SPREADSHEET_ID)
+    dep = collect_all_depenses(client, SPREADSHEET_ID)
+
+    # --- Total A+S (مداخيل) و Reste ---
+    rev_grp = pd.DataFrame()
+    if not rev.empty:
+        rev_grp = (rev.groupby("Month", dropna=False)
+                     .agg(**{
+                         "Total A+S (مداخيل)": ("Montant_Total", "sum"),
+                         "إجمالي Reste بالدروس": ("Reste", "sum"),
+                     })
+                     .reset_index())
+
+    # --- Total مصاريف ---
+    dep_grp = pd.DataFrame()
+    if not dep.empty:
+        dep_grp = (dep.groupby("Month", dropna=False)
+                     .agg(**{"Total مصاريف": ("Montant", "sum")})
+                     .reset_index())
+
+    # --- إجمالي مبلغ المسجّلين ---
+    inscrit_total = pd.DataFrame()
+    if not df_all_crm.empty and not rev.empty:
+        crm = df_all_crm.copy()
+        crm["Inscription_norm"] = crm["Inscription"].fillna("").astype(str).str.strip().str.lower()
+        inscrit_names = set(_normalize_name(n) for n in crm.loc[crm["Inscription_norm"].isin(["oui","inscrit"]), "Nom & Prénom"].astype(str))
+        if inscrit_names:
+            rev_inscrit = rev[rev["Client_extracted"].isin(inscrit_names)].copy()
+            if not rev_inscrit.empty:
+                inscrit_total = (rev_inscrit.groupby("Month", dropna=False)
+                                 .agg(**{"إجمالي مبلغ المسجّلين": ("Montant_Total", "sum")})
+                                 .reset_index())
+
+    # دمج الجداول
+    out = None
+    for part in [rev_grp, dep_grp, inscrit_total]:
+        if part is None or part.empty:
+            continue
+        out = part if out is None else pd.merge(out, part, on="Month", how="outer")
+
+    if out is None:
+        return pd.DataFrame(columns=["Month","Total A+S (مداخيل)","Total مصاريف","إجمالي Reste بالدروس","إجمالي مبلغ المسجّلين"])
+
+    # أصفار بدل NaN
+    for c in ["Total A+S (مداخيل)","Total مصاريف","إجمالي Reste بالدروس","إجمالي مبلغ المسجّلين"]:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce").fillna(0.0)
+
+    # ترتيب نزولي حسب الشهر (نوفمبر، أكتوبر، ...)
+    out["_dt"] = pd.to_datetime(out["Month"] + "-01", errors="coerce")
+    out = out.sort_values("_dt", ascending=False).drop(columns=["_dt"]).reset_index(drop=True)
+    return out
+
 # ---------------- Employee Password Locks ----------------
 def _get_emp_password(emp_name: str) -> str:
     try:
@@ -561,7 +645,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         ])
         ui_kpis([
             {"label":"Total A+S (مداخيل)","value": f"{sum_total_as:,.2f}","tone":"blue"},
-            {"label":"Total مصاريف","value": f"{(dep_admin+dep_struct+dep_inscr):,.2f}","tone":"warn"},
+            {"label":"Total مصاريف","value": f"{(dep_admin+dep_struct+dep_inscr):, .2f}","tone":"warn"},
             {"label":"إجمالي Reste بالدروس","value": f"{sum_reste_due:,.2f}","tone":"orange"},
         ])
         ui_section_end()
@@ -662,7 +746,7 @@ if not df_all.empty:
     inscrit_mask = df_all["Inscription_norm"].isin(["oui","inscrit"])
     df_all.loc[inscrit_mask, "Date de suivi"] = ""; df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
-    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
+    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléפון_norm"] = ""; ALL_PHONES = set()
 
 # ---------------- Dashboard KPIs ----------------
 ui_section("لوحة الإحصائيات السريعة", "📈")
@@ -734,7 +818,7 @@ if global_phone.strip():
 st.markdown("---"); ui_section_end()
 
 # ---------------- Employee area ----------------
-if role == "موظف" and employee:
+if role == "موظف" و employee:
     _emp_lock_ui(employee)
     if not _emp_unlocked(employee): st.info("🔒 أدخل كلمة سرّ الموظّف في أعلى هذا القسم لفتح الورقة."); st.stop()
 
@@ -763,8 +847,13 @@ if role == "موظف" and employee:
         ui_section_end()
 
     if not filtered_df.empty:
-        pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
-        ui_badge(f"⏳ مضافين بلا ملاحظات: {int(pending_mask.sum())}", "orange")
+        # إصلاح العدّاد: استثناء المسجّلين
+        filtered_df["Inscription_norm"] = filtered_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
+        pending_mask = (
+            (filtered_df["Remarque"].fillna("").astype(str).str.strip() == "") &
+            (~filtered_df["Inscription_norm"].isin(["oui","inscrit"]))
+        )
+        ui_badge(f"⏳ مضافين بلا ملاحظات (غير مسجّلين): {int(pending_mask.sum())}", "orange")
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
@@ -846,42 +935,18 @@ if role == "موظف" and employee:
                         if extra_note.strip():
                             old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
                             stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                            appended = (old_rem + "\\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
+                            appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
                             ws.update_cell(row_idx, col_map["Remarque"], appended)
                         st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
         ui_section_end()
 
-    # 📝 ملاحظة سريعة + Tag
+    # 🎨 Tag فقط (تم حذف ملاحظة سريعة حسب طلبك)
     if not df_emp.empty:
-        ui_section("📝 أضف ملاحظة (سريعة)", "📝")
+        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
         scope_df = (filtered_df if not filtered_df.empty else df_emp).copy()
         scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_to_update_key = st.selectbox("اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-            key="note_quick_pick")
-        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-        new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
-        if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee); values = ws.get_all_values(); header = values[0] if values else []
-                if "Téléphone" in header:
-                    tel_idx = header.index("Téléphone"); row_idx = None
-                    for i, r in enumerate(values[1:], start=2):
-                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update: row_idx = i; break
-                    if not row_idx: st.error("❌ الهاتف غير موجود.")
-                    else:
-                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                        old_remark = ws.cell(row_idx, rem_col).value or ""
-                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        updated = (old_remark + "\\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
-                        ws.update_cell(row_idx, rem_col, updated)
-                        st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
-            except Exception as e: st.error(f"❌ خطأ: {e}")
-        ui_section_end()
-
-        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
         tel_color_key = st.selectbox("اختر العميل",
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
             key="tag_select")
@@ -951,6 +1016,20 @@ if role == "موظف" and employee:
                         row_values = row_values[:len(EXPECTED_HEADERS)]
                         row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
                         ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
+
+                        # ✍️ ملاحظة تلقائية باسم الفاعل ومن → إلى
+                        dst_values = ws_dst.get_all_values()
+                        dst_header = dst_values[0] if dst_values else []
+                        if "Remarque" in dst_header:
+                            rem_col = dst_header.index("Remarque") + 1
+                            last_row_idx = len(dst_values)  # الصف الأخير بعد append
+                            old_remark = ws_dst.cell(last_row_idx, rem_col).value or ""
+                            stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                            actor = st.session_state.get("current_user", "Admin")
+                            moved_note = f"[{stamp}] نقل عميل بواسطة: {actor} — من {src_emp} إلى {dst_emp}"
+                            new_remark = (old_remark + "\n" if old_remark else "") + moved_note
+                            ws_dst.update_cell(last_row_idx, rem_col, new_remark)
+
                         st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ أثناء النقل: {e}")
     ui_section_end()
@@ -1025,4 +1104,14 @@ if role == "أدمن":
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ: {e}")
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
+
+        # ========== تجميع شهري للمبالغ ==========
+        ui_section("📅 ملخّص شهري: المداخيل / المصاريف / البواقي / مبلغ المسجّلين", "📅")
+        monthly_df = build_monthly_totals(df_all)
+        if monthly_df.empty:
+            st.info("لا توجد بيانات كافية لعرض الملخّص الشهري.")
+        else:
+            n_months = st.slider("عدد الأشهر للعرض", min_value=3, max_value=24, value=12, step=1)
+            st.dataframe(monthly_df.head(n_months), use_container_width=True)
+        ui_section_end()
     ui_section_end()
