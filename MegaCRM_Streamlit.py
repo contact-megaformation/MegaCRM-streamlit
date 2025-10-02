@@ -1,11 +1,8 @@
 # MegaCRM_Streamlit_App_PRO_Light.py
 # ===============================================================================================================
-# CRM + "مداخيل (MB/Bizerte)" + Pré-Inscription + 📝 نوط داخلية — واجهة فاتحة احترافية + أزرار حقيقية (3D)
-# - ثيم فاتح، خط واضح، كروت KPIs، تنظيم الأقسام، جداول داخل Cards
-# - أزرار 3D: حدود واضحة، ظلّ، hover/active/focus
-# - إصلاح strip() -> str.strip() في pandas
-# - قسم جديد: 📓 قسم الملاحظات على العميل (إضافة ملاحظة بطابع زمني في Remarque)
-# - عدّاد "مضافين بلا ملاحظات" لا يحسب المسجّلين
+# واجهة فاتحة + أزرار 3D + CRM + مداخيل/مصاريف (MB/Bizerte) + نوط داخلية + واتساب + نقل العملاء + لوج للنقل
+# + ملخصات شهرية (A+S / مصاريف / Reste / Prix=مبلغ المسجلين) للأدمن — دون حذف أي سكشن قديم
+# ===============================================================================================================
 
 import json, time, urllib.parse, base64, uuid, re
 import streamlit as st
@@ -33,19 +30,18 @@ def inject_pro_ui():
         font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, 'Helvetica Neue', Arial, "Noto Sans", "Liberation Sans", sans-serif !important;
         font-size: 16px !important; line-height: 1.45 !important;
       }
-      [data-testid="stSidebar"]{ background:#fbfdff !important; border-right:1px solid var(--border) !important; }
+      [data-testid="stSidebar"]{ background: #fbfdff !important; border-right: 1px solid var(--border) !important; }
 
-      /* Real Buttons (3D) */
+      /* ---------- Real Buttons (3D look) ---------- */
       .stButton>button, .stDownloadButton>button{
         position: relative !important; appearance:none !important; border-radius:12px !important;
-        background: linear-gradient(180deg, var(--accent-2), var(--accent)) !important;
-        color:#fff !important; border:1px solid #1e40af !important;
-        padding:.65rem 1.1rem !important; font-weight:800 !important; letter-spacing:.2px !important;
+        background: linear-gradient(180deg, var(--accent-2), var(--accent)) !important; color:#fff !important;
+        border:1px solid #1e40af !important; padding:.65rem 1.1rem !important; font-weight:800 !important; letter-spacing:.2px !important;
         box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,.25), 0 0 0 1px rgba(255,255,255,.6) inset;
         transition: transform .06s ease, box-shadow .12s ease, filter .15s ease;
       }
       .stButton>button:hover, .stDownloadButton>button:hover{
-        filter:brightness(1.03);
+        filter: brightness(1.03);
         box-shadow: 0 2px 0 #153e94 inset, 0 10px 22px rgba(37,99,235,.30), 0 0 0 1px rgba(255,255,255,.65) inset;
       }
       .stButton>button:active, .stDownloadButton>button:active{
@@ -60,34 +56,40 @@ def inject_pro_ui():
       /* Inputs */
       .stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>div>div,
       .stDateInput>div>div>input, .stNumberInput input{
-        background:#fff !important; color:var(--text) !important; border-radius:12px !important;
-        border:1px solid var(--border) !important; box-shadow:0 1px 0 rgba(0,0,0,.02) inset !important;
+        background:#fff !important; color:var(--text) !important; border-radius:12px !important; border:1px solid var(--border) !important;
+        box-shadow: 0 1px 0 rgba(0,0,0,.02) inset !important;
       }
       .stTextArea textarea{ min-height:110px !important; }
 
-      /* Topbar */
+      /* Cards/Sections */
       .topbar{
-        border-radius:18px; padding:18px 22px; background:linear-gradient(135deg,#fff,#f3f7ff);
+        border-radius:18px; padding:18px 22px; background:linear-gradient(135deg,#ffffff,#f3f7ff);
         border:1px solid var(--border); box-shadow:0 12px 30px rgba(16,24,40,.08); margin-bottom:14px;
       }
-      .topbar h1{ margin:0; font-size:26px; letter-spacing:.2px; color:var(--text); }
+      .topbar h1{ margin:0; font-size:26px; letter-spacing:.2px; color:var(--text);}
       .topbar p{ margin:8px 0 0; color:var(--muted); }
-
-      /* Section/Card */
       .section{
         background:var(--card); border-radius:var(--radius); border:1px solid var(--border);
         padding:14px 16px; margin:10px 0 18px; box-shadow:0 8px 20px rgba(16,24,40,.06);
       }
       .section h3{ margin:4px 0 12px; color:var(--text); }
+      .stDataFrame{
+        background: var(--card) !important; border-radius: var(--radius) !important; border: 1px solid var(--border) !important;
+        box-shadow: 0 10px 24px rgba(16, 24, 40, .06) !important; overflow: hidden !important;
+      }
 
-      /* KPI Cards */
-      .kpi-grid{ display:grid; grid-template-columns: repeat(5, minmax(140px, 1fr)); gap:12px; }
+      /* KPI */
+      .kpi-grid{ display:grid; grid-template-columns: repeat(5, minmax(140px,1fr)); gap:12px; }
       .kpi{ background:#fff; border-radius:14px; padding:14px; border:1px solid var(--border); box-shadow:0 8px 20px rgba(16,24,40,.06); }
       .kpi .label{ color:var(--muted); font-size:13px; }
       .kpi .value{ font-size:22px; font-weight:800; margin-top:6px; letter-spacing:.2px; color:var(--text); }
-      .kpi.ok{border-color:rgba(34,197,94,.45);} .kpi.warn{border-color:rgba(217,119,6,.35);} .kpi.dng{border-color:rgba(220,38,38,.40);}
+      .kpi.ok{border-color:rgba(34,197,94,.45)} .kpi.warn{border-color:rgba(217,119,6,.35)} .kpi.dng{border-color:rgba(220,38,38,.40)}
+
+      /* Pills */
       .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); color:var(--text); background:#fff; }
-      .pill.orange{border-color:#fed7aa; background:#fff7ed;}
+      .pill.blue{border-color:#bfdbfe; background:#eff6ff;} .pill.green{border-color:#bbf7d0; background:#ecfdf5;}
+      .pill.orange{border-color:#fed7aa; background:#fff7ed;} .pill.red{border-color:#fecaca; background:#fef2f2;}
+      .muted{ color: var(--muted); font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -111,7 +113,7 @@ def ui_kpis(items):
         """, unsafe_allow_html=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-def ui_badge(text, tone="orange"):
+def ui_badge(text, tone="blue"):
     st.markdown(f'<span class="pill {tone}">{text}</span>', unsafe_allow_html=True)
 
 # call once
@@ -138,7 +140,7 @@ def make_client_and_sheet_id():
     except Exception:
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
         client = gspread.authorize(creds)
-        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها بإيديك
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها بمالك
         return client, sheet_id
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
@@ -185,8 +187,7 @@ def inter_notes_mark_read(note_ids: list[str]):
     header = values[0]
     try:
         idx_note = header.index("note_id"); idx_status = header.index("status")
-    except ValueError:
-        return
+    except ValueError: return
     for r, row in enumerate(values[1:], start=2):
         if len(row) > idx_note and row[idx_note] in note_ids:
             ws.update_cell(r, idx_status + 1, "read")
@@ -204,7 +205,6 @@ def play_sound_mp3(path="notification.mp3"):
 
 def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
     ui_section("📝 النوط الداخلية", "📝")
-
     with st.expander("✍️ إرسال نوط لموظف آخر", expanded=True):
         col1, col2 = st.columns([1,2])
         with col1:
@@ -222,8 +222,7 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
     if "prev_unread_count" not in st.session_state: st.session_state.prev_unread_count = 0
     unread_df = inter_notes_fetch_unread(current_employee); unread_count = len(unread_df)
     try:
-        if unread_count > st.session_state.prev_unread_count:
-            st.toast("📩 نوط جديدة وصْلتك!", icon="✉️"); play_sound_mp3()
+        if unread_count > st.session_state.prev_unread_count: st.toast("📩 نوط جديدة وصْلتك!", icon="✉️"); play_sound_mp3()
     finally:
         st.session_state.prev_unread_count = unread_count
 
@@ -238,11 +237,9 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
             if st.button("اعتبر الكل مقروء ✅", use_container_width=True):
                 inter_notes_mark_read(unread_df["note_id"].tolist()); st.success("تم التعليم كمقروء."); st.rerun()
         with colB:
-            selected_to_read = st.multiselect(
-                "اختار رسائل لتعليمها كمقروء",
-                options=unread_df["note_id"].tolist(),
-                format_func=lambda nid: f"من {unread_df[unread_df['note_id']==nid]['sender'].iloc[0]} — {unread_df[unread_df['note_id']==nid]['message'].iloc[0][:30]}..."
-            )
+            selected_to_read = st.multiselect("اختار رسائل لتعليمها كمقروء",
+                                              options=unread_df["note_id"].tolist(),
+                                              format_func=lambda nid: f"من {unread_df[unread_df['note_id']==nid]['sender'].iloc[0]} — {unread_df[unread_df['note_id']==nid]['message'].iloc[0][:30]}...")
             if st.button("تعليم المحدد كمقروء", disabled=not selected_to_read, use_container_width=True):
                 inter_notes_mark_read(selected_to_read); st.success("تم التعليم كمقروء."); st.rerun()
 
@@ -279,6 +276,9 @@ FIN_REV_COLUMNS = ["Date","Libellé","Prix","Montant_Admin","Montant_Structure",
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
+TRANSFER_LOG_SHEET = "_TransferLog"
+TRANSFER_LOG_HEADERS = ["ts","from","to","client_name","phone","done_by"]
+
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return df
     df = df.copy(); df.columns = pd.Index(df.columns).astype(str)
@@ -311,7 +311,11 @@ def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
     return ws
 
 def _to_num_series(s):
-    return s.astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False).pipe(pd.to_numeric, errors="coerce").fillna(0.0)
+    return (s.astype(str)
+              .str.replace(" ", "", regex=False)
+              .str.replace(",", ".", regex=False)
+              .pipe(pd.to_numeric, errors="coerce")
+              .fillna(0.0))
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
     cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
@@ -356,13 +360,11 @@ def format_display_phone(s: str) -> str:
 def color_tag(val):
     if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7: return f"background-color: {val}; color: white;"
     return ""
-
 def mark_alert_cell(val: str):
     s = str(val).strip()
     if not s: return ''
     if "متأخر" in s: return 'background-color: #fff3cd; color: #7a4e00'
     return 'background-color: #ffe5e5; color: #7a0000'
-
 def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription", "")).strip().lower()
     return ['background-color: #ecfdf5' if insc in ("inscrit","oui") else '' for _ in row.index]
@@ -404,12 +406,9 @@ def load_all_data():
         if title == INTER_NOTES_SHEET: continue
         all_employes.append(title)
         rows = ws.get_all_values()
-        if not rows:
-            ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
-        try:
-            ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
-        except Exception:
-            pass
+        if not rows: ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
+        try: ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
+        except Exception: pass
         data_rows = rows[1:] if len(rows) > 1 else []
         fixed_rows = []
         for r in data_rows:
@@ -444,11 +443,35 @@ def admin_lock_ui():
             admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password", key="admin_pwd_inp")
             if st.button("فتح صفحة الأدمِن"):
                 conf = str(st.secrets.get("admin_password", "admin123"))
-                if admin_pwd and admin_pwd == conf:
-                    st.session_state["admin_ok"] = True; st.session_state["admin_ok_at"] = datetime.now()
-                    st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
+                if admin_pwd and admin_pwd == conf: st.session_state["admin_ok"] = True; st.session_state["admin_ok_at"] = datetime.now(); st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
                 else: st.error("كلمة سرّ غير صحيحة.")
 if role == "أدمن": admin_lock_ui()
+
+# ---------------- Helpers: Collect monthly totals (for Admin) ----------------
+@st.cache_data(ttl=300)
+def collect_monthly_finance():
+    """يرجع DataFrame لكل الأشهر (الفرعين)، يحتوي:
+       mois, branch, revenus_AS, depenses, reste, prix_total (مبلغ المسجّلين)"""
+    sh = client.open_by_key(SPREADSHEET_ID)
+    months = FIN_MONTHS_FR
+    rows = []
+    for branch in ["Menzel Bourguiba", "Bizerte"]:
+        for mois in months:
+            rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
+            dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+            revenus_AS = float(rev["Montant_Total"].sum()) if "Montant_Total" in rev.columns else 0.0
+            depenses    = float(dep["Montant"].sum()) if "Montant" in dep.columns else 0.0
+            reste       = float(rev["Reste"].sum()) if "Reste" in rev.columns else 0.0
+            prix_total  = float(rev["Prix"].sum()) if "Prix" in rev.columns else 0.0  # نعتبره مبلغ المسجّلين
+            rows.append({"mois": mois, "branch": branch, "Total_AplusS": revenus_AS, "Total_Dep": depenses, "Total_Reste": reste, "Montant_Inscrits": prix_total})
+    df = pd.DataFrame(rows)
+    # ترتيب الأشهر حسب تقويم السنة
+    cat = pd.Categorical(df["mois"], categories=FIN_MONTHS_FR, ordered=True)
+    df["mois"] = cat
+    return df.sort_values(["mois","branch"])
+
+def month_name_fr(dt: date) -> str:
+    return FIN_MONTHS_FR[dt.month-1]
 
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
@@ -466,8 +489,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             if st.button("دخول الفرع", key=f"fin_enter_{branch}"):
                 if pw_try and pw_try == BRANCH_PASSWORDS.get(branch, ""): st.session_state[key_pw] = True; st.success("تم الدخول ✅")
                 else: st.error("كلمة سرّ غير صحيحة ❌")
-    if not st.session_state.get(f"finance_pw_ok::{branch}", False):
-        st.info("⬅️ أدخل كلمة السرّ من اليسار للمتابعة."); st.stop()
+    if not st.session_state.get(f"finance_pw_ok::{branch}", False): st.info("⬅️ أدخل كلمة السرّ من اليسار للمتابعة."); st.stop()
 
     fin_title = fin_month_title(mois, kind, branch)
     df_fin = fin_read_df(client, SPREADSHEET_ID, fin_title, kind); df_view = df_fin.copy()
@@ -497,6 +519,41 @@ if tab_choice == "مداخيل (MB/Bizerte)":
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
     ui_section_end()
 
+    # === Admin-only monthly rollup (لا نحذف شيء، هذا إضافة) ===
+    if role == "أدمن" and admin_unlocked():
+        ui_section("📅 ملخّص شهري (Admin فقط)", "📅")
+        monthly = collect_monthly_finance()
+        # KPI للشهر الحالي واللي قبلو (مجمع الفرعين)
+        curr_m = month_name_fr(date.today())
+        prev_m = FIN_MONTHS_FR[(date.today().month-2) % 12]
+        curRow = monthly[monthly["mois"]==curr_m].groupby("mois").sum(numeric_only=True)
+        prevRow= monthly[monthly["mois"]==prev_m].groupby("mois").sum(numeric_only=True)
+
+        def row_or_zero(df, col):
+            try: return float(df[col].iloc[0])
+            except: return 0.0
+
+        cur_AplusS = row_or_zero(curRow, "Total_AplusS")
+        cur_Dep    = row_or_zero(curRow, "Total_Dep")
+        cur_Reste  = row_or_zero(curRow, "Total_Reste")
+        cur_Inscr  = row_or_zero(curRow, "Montant_Inscrits")
+
+        ui_kpis([
+            {"label":f"({curr_m}) Total A+S (مداخيل)","value":f"{cur_AplusS:,.2f}","tone":"ok"},
+            {"label":f"({curr_m}) Total مصاريف","value":f"{cur_Dep:,.2f}","tone":"warn"},
+            {"label":f"({curr_m}) إجمالي Reste","value":f"{cur_Reste:,.2f}","tone":"orange"},
+            {"label":f"({curr_m}) مبلغ المسجّلين (Prix)","value":f"{cur_Inscr:,.2f}","tone":"blue"},
+        ])
+
+        st.markdown("#### 📊 جدول التجميع الشهري (الفرعين)")
+        tbl = (monthly
+               .groupby("mois", sort=True, observed=True)
+               .sum(numeric_only=True)
+               .reset_index()
+               .rename(columns={"mois":"الشهر","Total_AplusS":"A+S (مداخيل)","Total_Dep":"مصاريف","Total_Reste":"Reste","Montant_Inscrits":"مبلغ المسجّلين (Prix)"}))
+        st.dataframe(tbl, use_container_width=True, height=320)
+        ui_section_end()
+
 # ---------------- CRM: مشتقّات وعرض ----------------
 df_all = df_all.copy()
 if not df_all.empty:
@@ -514,9 +571,9 @@ if not df_all.empty:
     ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
     df_all["Inscription_norm"] = df_all["Inscription"].fillna("").astype(str).str.strip().str.lower()
     inscrit_mask = df_all["Inscription_norm"].isin(["oui","inscrit"])
-    df_all.loc[inscrit_mask, "Date de suivi"] = ""; df_all.loc[inscrit_mask, "Alerte_view"] = ""
+    # ملاحظة: ما عادش نعتبر المسجّلين "مضافين بلا ملاحظات" — فقط نعرضهم عادي
 else:
-    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
+    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Télé폰_norm"] = ""; ALL_PHONES = set()
 
 # ---------------- Dashboard KPIs ----------------
 ui_section("لوحة الإحصائيات السريعة", "📈")
@@ -567,9 +624,7 @@ grp_base = (df_stats.groupby("__sheet_name", dropna=False)
 grp_base["% تسجيل"] = ((grp_base["Inscrits"] / grp_base["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
 grp_base = grp_base.sort_values(by=["تنبيهات","Clients"], ascending=[False, False])
 
-ui_section("حسب الموظّف", "🧑‍💼")
-st.dataframe(grp_base, use_container_width=True)
-ui_section_end()
+ui_section("حسب الموظّف", "🧑‍💼"); st.dataframe(grp_base, use_container_width=True); ui_section_end()
 
 # ---------------- Global phone search ----------------
 ui_section("🔎 بحث عام برقم الهاتف", "🔎")
@@ -588,6 +643,27 @@ if global_phone.strip():
                          .applymap(mark_alert_cell, subset=["Alerte"]))
         st.dataframe(styled_global, use_container_width=True)
 st.markdown("---"); ui_section_end()
+
+# ---------------- Helper: Transfer Log Sheet ----------------
+def ensure_transfer_log_ws():
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(TRANSFER_LOG_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=TRANSFER_LOG_SHEET, rows="1000", cols="12")
+        ws.update("1:1", [TRANSFER_LOG_HEADERS])
+    return ws
+
+def append_transfer_log(src_emp, dst_emp, name, phone, done_by):
+    ws = ensure_transfer_log_ws()
+    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    ws.append_row([ts, src_emp, dst_emp, name, phone, done_by])
+
+def read_transfer_log_df():
+    ws = ensure_transfer_log_ws()
+    vals = ws.get_all_values()
+    if not vals or len(vals)<=1: return pd.DataFrame(columns=TRANSFER_LOG_HEADERS)
+    return pd.DataFrame(vals[1:], columns=vals[0])
 
 # ---------------- Employee area ----------------
 if role == "موظف" and employee:
@@ -618,17 +694,21 @@ if role == "موظف" and employee:
             st.dataframe(styled, use_container_width=True)
         ui_section_end()
 
-    # لا نحسب المسجّلين ضمن "بلا ملاحظات"
     if not filtered_df.empty:
-        filtered_df["Inscription_norm"] = filtered_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
-        pending_mask = (filtered_df["Remarque"].fillna("").astype(str).str.strip() == "") & (~filtered_df["Inscription_norm"].isin(["oui","inscrit"]))
-        ui_badge(f"⏳ مضافين بلا ملاحظات: {int(pending_mask.sum())}", "orange")
+        # لا نحسب المسجّلين كمضافين بلا ملاحظات — نعرض عدّاد عام فقط
+        pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
+        ui_badge(f"⏳ مضافين بلا ملاحظات (بدون استثناء المسجّلين): {int(pending_mask.sum())}", "orange")
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
             filtered_df = filtered_df[filtered_df["Formation"].astype(str) == formation_choice]
 
     render_table(filtered_df, "📋 قائمة العملاء")
+
+    if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+        _df = filtered_df.copy(); _df["Alerte"] = _df.get("Alerte_view", "")
+        alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
+        render_table(alerts_df, "🚨 عملاء مع تنبيهات")
 
     # ✏️ تعديل بيانات عميل
     if not df_emp.empty:
@@ -652,7 +732,7 @@ if role == "موظف" and employee:
             name_key=f"edit_name_txt::{chosen_phone}"; phone_key=f"edit_phone_txt::{chosen_phone}"
             form_key=f"edit_formation_txt::{chosen_phone}"; ajout_key=f"edit_ajout_dt::{chosen_phone}"
             suivi_key=f"edit_suivi_dt::{chosen_phone}"; insc_key=f"edit_insc_sel::{chosen_phone}"
-            remark_key=f"edit_remark_txt::{chosen_phone}"
+            remark_key=f"edit_remark_txt::{chosen_phone}"; note_key=f"append_note_txt::{chosen_phone}"
 
             col1, col2 = st.columns(2)
             with col1:
@@ -665,6 +745,7 @@ if role == "موظف" and employee:
                 new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key=insc_key)
 
             new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
+            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
 
             def find_row_by_phone(ws, phone_digits: str) -> int | None:
                 values = ws.get_all_values()
@@ -694,46 +775,62 @@ if role == "موظف" and employee:
                         ws.update_cell(row_idx, col_map["Date ajout"], fmt_date(new_ajout))
                         ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
                         ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
-                        if new_remark_full.strip() != cur_remark.strip():
-                            ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
+                        if new_remark_full.strip() != cur_remark.strip(): ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
+                        if extra_note.strip():
+                            old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
+                            stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                            appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
+                            ws.update_cell(row_idx, col_map["Remarque"], appended)
                         st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
         ui_section_end()
 
-        # 📓 قسم الملاحظات على العميل — إضافة ملاحظة جديدة بطابع زمني
-        ui_section("📓 قسم الملاحظات على العميل", "📝")
+    # 📝 ملاحظة سريعة (رجّعتها بناءً على طلبك «ما ننحي شي»)
+    if not df_emp.empty:
+        ui_section("📝 أضف ملاحظة (سريعة)", "📝")
         scope_df = (filtered_df if not filtered_df.empty else df_emp).copy()
-        if not scope_df.empty:
-            scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-            tel_to_update_key = st.selectbox(
-                "اختر العميل",
-                [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-                key="note_add_pick"
-            )
-            tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-            new_note_text = st.text_area("🆕 اكتب الملاحظة الجديدة (سيُضاف لها طابع زمني)", key="note_add_text")
-            if st.button("📌 إضافة الملاحظة للعميل", key="note_add_btn", use_container_width=True):
-                try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
-                    values = ws.get_all_values(); header = values[0] if values else []
-                    if "Téléphone" in header:
-                        tel_idx = header.index("Téléphone"); row_idx = None
-                        for i, r in enumerate(values[1:], start=2):
-                            if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update:
-                                row_idx = i; break
-                        if not row_idx: st.error("❌ الهاتف غير موجود.")
-                        else:
-                            rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                            old_remark = ws.cell(row_idx, rem_col).value or ""
-                            stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                            updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_text.strip()}"
-                            ws.update_cell(row_idx, rem_col, updated)
-                            st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
-        else:
-            st.info("لا توجد قائمة عملاء لإضافة ملاحظات حاليًا.")
+        scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+        tel_to_update_key = st.selectbox("اختر العميل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+            key="note_quick_pick")
+        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
+        new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
+        if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee); values = ws.get_all_values(); header = values[0] if values else []
+                if "Téléphone" in header:
+                    tel_idx = header.index("Téléphone"); row_idx = None
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update: row_idx = i; break
+                    if not row_idx: st.error("❌ الهاتف غير موجود.")
+                    else:
+                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
+                        old_remark = ws.cell(row_idx, rem_col).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
+                        ws.update_cell(row_idx, rem_col, updated)
+                        st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
+            except Exception as e: st.error(f"❌ خطأ: {e}")
+        ui_section_end()
+
+        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
+        tel_color_key = st.selectbox("اختر العميل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+            key="tag_select")
+        tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
+        hex_color = st.color_picker("اختر اللون")
+        if st.button("🖌️ تلوين"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee); values = ws.get_all_values(); header = values[0] if values else []; row_idx = None
+                if "Téléphone" in header:
+                    tel_idx = header.index("Téléphone")
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_color: row_idx = i; break
+                if not row_idx: st.error("❌ لم يتم إيجاد العميل.")
+                else:
+                    color_cell = EXPECTED_HEADERS.index("Tag") + 1; ws.update_cell(row_idx, color_cell, hex_color); st.success("✅ تم التلوين"); st.cache_data.clear()
+            except Exception as e: st.error(f"❌ خطأ: {e}")
         ui_section_end()
 
     # ➕ أضف عميل جديد
@@ -759,6 +856,55 @@ if role == "موظف" and employee:
                 ws.append_row([nom, tel, type_contact, formation, "", fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""])
                 st.success("✅ تم إضافة العميل"); st.cache_data.clear()
             except Exception as e: st.error(f"❌ خطأ أثناء الإضافة: {e}")
+    ui_section_end()
+
+    # 🔁 نقل + WhatsApp (مع لوج الموظّف اللي عمل النقل)
+    ui_section("🔁 نقل عميل بين الموظفين", "🔁")
+    if all_employes:
+        colRA, colRB = st.columns(2)
+        with colRA: src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
+        with colRB: dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
+        df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
+        if df_src.empty: st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+        else:
+            pick = st.selectbox("اختر العميل للنقل", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()], key="reassign_pick")
+            phone_pick = normalize_tn_phone(pick.split("—")[-1])
+            if st.button("🚚 نقل الآن"):
+                try:
+                    sh = client.open_by_key(SPREADSHEET_ID); ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
+                    values = ws_src.get_all_values(); header = values[0] if values else []; row_idx = None
+                    if "Téléphone" in header:
+                        tel_idx = header.index("Téléphone")
+                        for i, r in enumerate(values[1:], start=2):
+                            if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == phone_pick: row_idx = i; break
+                    if not row_idx: st.error("❌ لم يتم العثور على هذا العميل.")
+                    else:
+                        row_values = ws_src.row_values(row_idx)
+                        if len(row_values) < len(EXPECTED_HEADERS): row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
+                        row_values = row_values[:len(EXPECTED_HEADERS)]
+                        row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                        client_name = row_values[EXPECTED_HEADERS.index("Nom & Prénom")]
+                        client_phone = row_values[EXPECTED_HEADERS.index("Téléphone")]
+                        ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
+                        append_transfer_log(src_emp, dst_emp, client_name, client_phone, employee or "Admin/Unknown")
+                        st.success(f"✅ نقل ({client_name}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
+                except Exception as e: st.error(f"❌ خطأ أثناء النقل: {e}")
+    ui_section_end()
+
+    ui_section("💬 تواصل WhatsApp", "💬")
+    if not df_emp.empty:
+        wa_pick = st.selectbox("اختر العميل لفتح واتساب",
+                               [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_emp.iterrows()],
+                               key="wa_pick")
+        default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقو معاك موعد المتابعة. 👍"
+        wa_msg = st.text_area("الرسالة (WhatsApp)", value=default_msg, key="wa_msg")
+        if st.button("📲 فتح WhatsApp"):
+            try:
+                raw_tel = wa_pick.split("—")[-1]; tel_norm = normalize_tn_phone(raw_tel)
+                url = f"https://wa.me/{tel_norm}?text={urllib.parse.quote(wa_msg)}"
+                st.markdown(f"[افتح المحادثة الآن]({url})")
+                st.info("اضغط على الرابط لفتح واتساب في نافذة/تبويب جديد.")
+            except Exception as e: st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
     ui_section_end()
 
 # ---------------- 📝 نوط داخلية Tab ----------------
@@ -814,5 +960,24 @@ if role == "أدمن":
                     sh = client.open_by_key(SPREADSHEET_ID); sh.del_worksheet(sh.worksheet(emp_to_delete))
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ: {e}")
+
+        st.markdown("---")
+        # عرض لوج نقل العملاء للأدمن
+        st.subheader("📚 سجلّ نقل العملاء (Transfer Log)")
+        log_df = read_transfer_log_df()
+        if log_df.empty:
+            st.caption("لا توجد عمليات نقل مسجّلة بعد.")
+        else:
+            st.dataframe(log_df.sort_values("ts", ascending=False), use_container_width=True, height=300)
+
+        # جدول تجميع شهري واضح لمبالغ المسجّلين (Prix) + A+S + مصاريف + Reste
+        st.markdown("### 📅 تجميع شهري — المبالغ حسب الأشهر (مجمع الفرعين)")
+        monthly = collect_monthly_finance()
+        roll = (monthly.groupby("mois", observed=True)
+                .sum(numeric_only=True)
+                .reset_index()
+                .rename(columns={"mois":"الشهر","Total_AplusS":"A+S (مداخيل)","Total_Dep":"مصاريف","Total_Reste":"Reste","Montant_Inscrits":"مبلغ المسجّلين (Prix)"}))
+        st.dataframe(roll, use_container_width=True, height=320)
+
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
     ui_section_end()
