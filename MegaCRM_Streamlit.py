@@ -9,6 +9,8 @@
 # - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
 # - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
+# - 🆕 Log نقل العملاء في ورقة _TransfersLog
+# - 🆕 ملخص Pré-Inscription (شهري + تراكمي) في تبويب المداخيل/المصاريف
 
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
@@ -210,7 +212,7 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 except:
                     return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", descending=False)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
             st.dataframe(disp, use_container_width=True, height=320)
 
 
@@ -454,6 +456,64 @@ def admin_lock_ui():
 if role == "أدمن":
     admin_lock_ui()
 
+# ---------------- 🆕 Helpers: actor + reassign log + preins summaries ----------------
+REASSIGN_LOG_SHEET = "_TransfersLog"
+REASSIGN_LOG_HEADERS = ["timestamp","by","from","to","client_name","phone"]
+
+def _actor_name():
+    # من هو الذي يقوم بالفعل الآن (موظّف أو Admin)
+    if role == "موظف" and employee:
+        return employee
+    return "Admin"
+
+def _log_reassign(by: str, src: str, dst: str, client_name: str, phone_norm: str):
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+        try:
+            ws = sh.worksheet(REASSIGN_LOG_SHEET)
+        except gspread.WorksheetNotFound:
+            ws = sh.add_worksheet(title=REASSIGN_LOG_SHEET, rows="2000", cols=str(len(REASSIGN_LOG_HEADERS)))
+            ws.update("1:1", [REASSIGN_LOG_HEADERS])
+        ts = datetime.now(timezone.utc).isoformat()
+        ws.append_row([ts, by, src, dst, client_name, phone_norm])
+    except Exception:
+        pass  # ما نكسّرش الفلو لو فشل اللوق
+
+def _months_up_to(selected_mois: str):
+    # يرجّع قائمة الأشهر من Janvier إلى الشهر المختار (بالاسم الفرنسي)
+    if selected_mois not in FIN_MONTHS_FR:
+        return []
+    idx = FIN_MONTHS_FR.index(selected_mois)
+    return FIN_MONTHS_FR[:idx+1]
+
+def _preins_summaries(branch: str, up_to_mois: str):
+    """يرجّع:
+       this_month: (rev_preins, dep_inscr, reste)
+       cumulative: (rev_preins, dep_inscr, reste)
+       table_by_month: DataFrame لكل شهر حتى المختار
+    """
+    mois_list = _months_up_to(up_to_mois)
+    rows = []
+    cum_rev = cum_dep = 0.0
+    for m in mois_list:
+        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Revenus", branch), "Revenus")
+        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Dépenses", branch), "Dépenses")
+        rev_pre = float(rev_df["Montant_PreInscription"].sum()) if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
+        dep_ins = float(dep_df.loc[dep_df.get("Caisse_Source","")=="Caisse_Inscription","Montant"].sum()) if not dep_df.empty else 0.0
+        reste   = rev_pre - dep_ins
+        rows.append({"Mois": m, "Pré-Inscription (Revenus)": rev_pre, "Dépenses (Inscription)": dep_ins, "Reste": reste})
+        cum_rev += rev_pre
+        cum_dep += dep_ins
+
+    table_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Mois","Pré-Inscription (Revenus)","Dépenses (Inscription)","Reste"])
+    # هذا الشهر:
+    this_rev = rows[-1]["Pré-Inscription (Revenus)"] if rows else 0.0
+    this_dep = rows[-1]["Dépenses (Inscription)"] if rows else 0.0
+    this_res = rows[-1]["Reste"] if rows else 0.0
+    # تراكمي:
+    cum_res = cum_rev - cum_dep
+    return (this_rev, this_dep, this_res), (cum_rev, cum_dep, cum_res), table_df
+
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
@@ -511,6 +571,26 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
+    # ====================== 🆕 Pré-Inscription: هذا الشهر + تراكمي ======================
+    with st.expander("📝 Pré-Inscription — هذا الشهر + تراكمي", expanded=True):
+        (this_rev, this_dep, this_res), (cum_rev, cum_dep, cum_res), table_df = _preins_summaries(branch, mois)
+
+        st.markdown("#### هذا الشهر")
+        a1, a2, a3 = st.columns(3)
+        a1.metric("مداخيل Pré-Inscription", f"{this_rev:,.2f}")
+        a2.metric("مصاريف Caisse_Inscription", f"{this_dep:,.2f}")
+        a3.metric("الباقي (هذا الشهر)", f"{this_res:,.2f}")
+
+        st.markdown("#### تراكمي حتى هذا الشهر")
+        b1, b2, b3 = st.columns(3)
+        b1.metric("مداخيل تراكمية", f"{cum_rev:,.2f}")
+        b2.metric("مصاريف تراكمية", f"{cum_dep:,.2f}")
+        b3.metric("الباقي التراكمي", f"{cum_res:,.2f}")
+
+        st.markdown("#### جدول شهري (من بداية السنة)")
+        st.dataframe(table_df, use_container_width=True)
+
+    # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
@@ -1051,8 +1131,11 @@ if role == "موظف" and employee:
                             row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
                         row_values = row_values[:len(EXPECTED_HEADERS)]
                         row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                        client_name_for_log = row_values[EXPECTED_HEADERS.index("Nom & Prénom")]
                         ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
-                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
+                        # 🆕 سجل عملية النقل
+                        _log_reassign(_actor_name(), src_emp, dst_emp, client_name_for_log, phone_pick)
+                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp} — تم التسجيل في السجل"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
