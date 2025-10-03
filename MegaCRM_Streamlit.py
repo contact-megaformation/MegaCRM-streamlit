@@ -1,20 +1,20 @@
-# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف + Pré-Inscription منفصلة + 📝 نوط داخلية + 🔁 سجلّ تحويلات + 📊 ملخص Pré-Inscription تراكمي
+# MegaCRM_Streamlit_App.py — CRM + "مداخيل (MB/Bizerte)" مع مصاريف + Pré-Inscription منفصلة + 📝 نوط داخلية
 # =================================================================================================
 # - CRM كامل: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث، ملاحظات/Tag، تعديل، إضافة، نقل + زر WhatsApp
-# - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة) + عرض سجلّ تحويلات العملاء
+# - Admin: إضافة/حذف موظف، إضافة عميل لأي موظّف (قفل 30 دقيقة)
 # - تبويب "مداخيل (MB/Bizerte)":
 #     Revenus: Prix + Montant_Admin + Montant_Structure + Montant_PreInscription (منفصل)
 #              + Montant_Total=(Admin+Structure) + Echeance + Reste + Alert تلقائي
 #     Dépenses: Montant + Caisse_Source (Admin/Structure/Inscription) + Mode/Employé/Note...
-# - 📊 ملخّص شهري تفصيلي للأدمن + 🆕 ملخص Pré-Inscription تراكمي حتى الشهر المختار
+# - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
 # - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
-# - 🆕 🔁 _TRANSFERS_LOG: يسجل شكون عمل نقل عميل (التاريخ/الوقت، من/إلى، العميل، الهاتف، التكوين، منفّذ العملية)
 
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
+from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
@@ -50,12 +50,36 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
+# ========= Helper: open sheet safely with clear error =========
+def open_sheet_safe(client, sheet_id: str):
+    try:
+        return client.open_by_key(sheet_id)
+    except APIError as e:
+        # حاول نجيب إيميل الـ service account للشرح
+        sa_email = ""
+        try:
+            sa = st.secrets.get("gcp_service_account", None)
+            if sa:
+                sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
+                sa_email = sa_info.get("client_email", "")
+        except Exception:
+            pass
+
+        st.error(
+            "⚠️ تعذّر فتح Google Sheet.\n\n"
+            f"- تأكّد من **SPREADSHEET_ID**: `{sheet_id}`\n"
+            f"- وشارك الملف مع هذا الإيميل (Service Account): **{sa_email or '<<service-account-email>>'}**\n"
+            "- أو أنّ الملف تم حذفه/نقله.\n"
+            f"تفاصيل تقنية: {e}"
+        )
+        st.stop()
+
 # ============================ 🆕 InterNotes (نوط داخلية) ============================
 INTER_NOTES_SHEET = "InterNotes"  # تُنشأ تلقائيًا لو مش موجودة
 INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
 
 def inter_notes_open_ws():
-    sh = client.open_by_key(SPREADSHEET_ID)
+    sh = open_sheet_safe(client, SPREADSHEET_ID)
     try:
         ws = sh.worksheet(INTER_NOTES_SHEET)
     except gspread.WorksheetNotFound:
@@ -231,25 +255,6 @@ FIN_REV_COLUMNS = [
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
-# ---------------- 🔁 Transfers log (NEW) ----------------
-TRANSFERS_SHEET = "_TRANSFERS_LOG"
-TRANSFERS_HEADERS = ["timestamp","by_role","by_user","from_emp","to_emp","client_name","tel","formation"]
-
-def ensure_transfers_ws():
-    sh = client.open_by_key(SPREADSHEET_ID)
-    try:
-        ws = sh.worksheet(TRANSFERS_SHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=TRANSFERS_SHEET, rows="2000", cols=str(len(TRANSFERS_HEADERS)))
-        ws.update("1:1", [TRANSFERS_HEADERS])
-    return ws
-
-def log_transfer(by_role: str, by_user: str, from_emp: str, to_emp: str, client_name: str, tel: str, formation: str):
-    ws = ensure_transfers_ws()
-    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    ws.append_row([ts, by_role, by_user, from_emp, to_emp, client_name, tel, formation])
-
-# ---------------- Small helpers ----------------
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -270,7 +275,7 @@ def fin_month_title(mois: str, kind: str, branch: str):
     return f"{prefix}{mois} ({short})"
 
 def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
-    sh = client.open_by_key(sheet_id)
+    sh = open_sheet_safe(client, sheet_id)
     try:
         ws = sh.worksheet(title)
     except Exception:
@@ -397,7 +402,7 @@ def _emp_lock_ui(emp_name: str):
 # ---------------- Load all CRM data (hide non-employee sheets) ----------------
 @st.cache_data(ttl=600)
 def load_all_data():
-    sh = client.open_by_key(SPREADSHEET_ID)
+    sh = open_sheet_safe(client, SPREADSHEET_ID)
     worksheets = sh.worksheets()
     all_dfs, all_employes = [], []
 
@@ -407,7 +412,6 @@ def load_all_data():
         if title.startswith("_"):           continue
         if title.startswith("Revenue ") or title.startswith("Dépense "): continue
         if title == INTER_NOTES_SHEET:      continue
-        if title == TRANSFERS_SHEET:        continue
 
         all_employes.append(title)
 
@@ -476,23 +480,6 @@ if role == "أدمن":
     admin_lock_ui()
 
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
-# 🆕 دالة تجمع تراكميًا من بداية السنة إلى الشهر المختار
-def fin_cumulative_until(branch: str, up_to_mois: str):
-    up_to_idx = FIN_MONTHS_FR.index(up_to_mois) if up_to_mois in FIN_MONTHS_FR else len(FIN_MONTHS_FR)-1
-    rev_all, dep_all = [], []
-    for m in FIN_MONTHS_FR[:up_to_idx+1]:
-        # Revenus
-        rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Revenus", branch), "Revenus")
-        if not rev.empty:
-            rev_all.append(rev)
-        # Dépenses
-        dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Dépenses", branch), "Dépenses")
-        if not dep.empty:
-            dep_all.append(dep)
-    rev_all_df = pd.concat(rev_all, ignore_index=True) if rev_all else pd.DataFrame(columns=FIN_REV_COLUMNS)
-    dep_all_df = pd.concat(dep_all, ignore_index=True) if dep_all else pd.DataFrame(columns=FIN_DEP_COLUMNS)
-    return safe_unique_columns(rev_all_df), safe_unique_columns(dep_all_df)
-
 if tab_choice == "مداخيل (MB/Bizerte)":
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
 
@@ -549,7 +536,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
-    # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
@@ -596,20 +582,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
             x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
 
-    # ====================== 🆕 ملخص Pré-Inscription تراكمي حتى الشهر المختار ======================
-    with st.expander(f"📊 ملخّص Pré-Inscription (منذ بداية السنة حتى {mois})", expanded=True):
-        rev_up_to, dep_up_to = fin_cumulative_until(branch, mois)
-
-        total_preins = rev_up_to["Montant_PreInscription"].sum() if ("Montant_PreInscription" in rev_up_to.columns and not rev_up_to.empty) else 0.0
-        dep_inscr_all = dep_up_to.loc[dep_up_to.get("Caisse_Source","").eq("Caisse_Inscription"), "Montant"].sum() if not dep_up_to.empty and "Caisse_Source" in dep_up_to.columns else 0.0
-        reste_preins = float(total_preins) - float(dep_inscr_all)
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("مجموع Pré-Inscription (حتى الشهر)", f"{total_preins:,.2f}")
-        c2.metric("مصاريف Caisse_Inscription (حتى الشهر)", f"{dep_inscr_all:,.2f}")
-        c3.metric("الباقي (حتى الشهر)", f"{reste_preins:,.2f}")
-
-    # ====================== إضافة عملية جديدة ======================
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
 
@@ -948,7 +920,8 @@ if role == "موظف" and employee:
 
             if st.button("💾 حفظ التعديلات", key="save_all_edits"):
                 try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
+                    ws = sh.worksheet(employee)
                     row_idx = find_row_by_phone(ws, normalize_tn_phone(chosen_phone))
                     if not row_idx:
                         st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
@@ -995,7 +968,8 @@ if role == "موظف" and employee:
         new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
         if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 if "Téléphone" in header:
@@ -1025,7 +999,8 @@ if role == "موظف" and employee:
         hex_color = st.color_picker("اختر اللون")
         if st.button("🖌️ تلوين"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 row_idx = None
@@ -1057,7 +1032,8 @@ if role == "موظف" and employee:
             date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
         if st.form_submit_button("📥 أضف العميل"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 tel = normalize_tn_phone(tel_raw)
                 if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
                 if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
@@ -1087,7 +1063,7 @@ if role == "موظف" and employee:
             phone_pick = normalize_tn_phone(pick.split("—")[-1])
             if st.button("🚚 نقل الآن"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
                     ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
                     values = ws_src.get_all_values()
                     header = values[0] if values else []
@@ -1103,21 +1079,7 @@ if role == "موظف" and employee:
                         if len(row_values) < len(EXPECTED_HEADERS):
                             row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
                         row_values = row_values[:len(EXPECTED_HEADERS)]
-                        # نحدّث الموظّف الجديد
                         row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                        # نسجل التحويل قبل نقل الصف
-                        try:
-                            client_name = row_values[EXPECTED_HEADERS.index("Nom & Prénom")]
-                            client_tel  = row_values[EXPECTED_HEADERS.index("Téléphone")]
-                            client_form = row_values[EXPECTED_HEADERS.index("Formation")]
-                        except Exception:
-                            client_name = row_values[0] if row_values else ""
-                            client_tel  = phone_pick
-                            client_form = ""
-                        who_role = "موظف" if role == "موظف" else "أدمن"
-                        who_user = (employee or "Admin")
-                        log_transfer(who_role, who_user, src_emp, dst_emp, client_name, normalize_tn_phone(client_tel), client_form)
-                        # ننقل الصف
                         ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
                         st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
@@ -1165,7 +1127,7 @@ if role == "أدمن":
             new_emp = st.text_input("اسم الموظّف الجديد")
             if st.button("إنشاء ورقة"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
                     titles = [w.title for w in sh.worksheets()]
                     if not new_emp or new_emp in titles:
                         st.warning("⚠️ الاسم فارغ أو موجود.")
@@ -1178,7 +1140,7 @@ if role == "أدمن":
 
         with colB:
             st.subheader("➕ إضافة عميل (لأي موظّف)")
-            sh = client.open_by_key(SPREADSHEET_ID)
+            sh = open_sheet_safe(client, SPREADSHEET_ID)
             target_emp = st.selectbox("اختر الموظّف", all_employes, key="admin_add_emp")
             nom_a = st.text_input("👤 الاسم و اللقب", key="admin_nom")
             tel_a_raw = st.text_input("📞 الهاتف", key="admin_tel")
@@ -1202,29 +1164,13 @@ if role == "أدمن":
 
         with colC:
             st.subheader("🗑️ حذف موظّف")
+            sh = open_sheet_safe(client, SPREADSHEET_ID)
             emp_to_delete = st.selectbox("اختر الموظّف", all_employes, key="admin_del_emp")
             if st.button("❗ حذف الورقة كاملة"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
                     sh.del_worksheet(sh.worksheet(emp_to_delete))
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
-
-        st.markdown("---")
-        # 🆕 عرض سجلّ التحويلات
-        st.subheader("🔁 سجلّ تحويلات العملاء")
-        try:
-            ws_tf = ensure_transfers_ws()
-            rows = ws_tf.get_all_values()
-            if rows and len(rows) > 1:
-                tf = pd.DataFrame(rows[1:], columns=rows[0])
-                tf["timestamp"] = pd.to_datetime(tf["timestamp"], errors="coerce")
-                tf = tf.sort_values("timestamp", ascending=False)
-                st.dataframe(tf.head(200), use_container_width=True)
-            else:
-                st.caption("لا تحويلات مسجّلة بعد.")
-        except Exception as e:
-            st.error(f"تعذّر قراءة سجلّ التحويلات: {e}")
 
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
