@@ -1,9 +1,10 @@
 # MegaCRM_Streamlit_App_PRO_Light.py
 # ===============================================================================================================
-# CRM + Revenus/Dépenses (MB/Bizerte) + Pré-Inscription + نوط داخلية — واجهة فاتحة + أزرار 3D + ملخّص شهري + لوج نقل
+# CRM + Revenus/Dépenses (MB/Bizerte) + Pré-Inscription + نوط داخلية — واجهة فاتحة + أزرار 3D
+# + ملخّص شهري محمي + Log نقل العملاء + صلاحيات عرض المصاريف للأدمن فقط + بدون "أضف ملاحظة سريعة"
 # ===============================================================================================================
 
-import json, time, urllib.parse, base64, uuid, re
+import json, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
@@ -52,15 +53,6 @@ def inject_pro_ui():
         outline: none !important;
         box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,0.25), 0 0 0 3px rgba(37,99,235,0.35) !important;
       }
-
-      /* Inputs */
-      .stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>div>div,
-      .stDateInput>div>div>input, .stNumberInput input{
-        background: #ffffff !important; color: var(--text) !important;
-        border-radius: 12px !important; border: 1px solid var(--border) !important;
-        box-shadow: 0 1px 0 rgba(0,0,0,0.02) inset !important;
-      }
-      .stTextArea textarea{ min-height: 110px !important; }
 
       /* Cards */
       .topbar{
@@ -120,7 +112,7 @@ ui_topbar("CRM MEGA FORMATION — إدارة العملاء", "إدارة الع
 # 🔎 بحث عام (placeholder)
 top_col1, _ = st.columns([3,1])
 with top_col1:
-    global_q = st.text_input("ابحث سريعًا...", placeholder="اكتب اسم / هاتف (216XXXXXXXX أو 8 أرقام) / تكوين ...")
+    _ = st.text_input("ابحث سريعًا...", placeholder="اكتب اسم / هاتف (216XXXXXXXX أو 8 أرقام) / تكوين ...")
 
 # ---------------- Google Sheets Auth ----------------
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -140,7 +132,7 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
-# ============================ 🆕 InterNotes (نوط داخلية) ============================
+# ============================ 📝 InterNotes (نوط داخلية) ============================
 INTER_NOTES_SHEET = "InterNotes"
 INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
 
@@ -187,21 +179,10 @@ def inter_notes_mark_read(note_ids: list[str]):
         if len(row) > idx_note and row[idx_note] in note_ids:
             ws.update_cell(r, idx_status + 1, "read")
 
-def play_sound_mp3(path="notification.mp3"):
-    try:
-        with open(path, "rb") as f:
-            b64 = base64.b64encode(f.read()).decode()
-        st.markdown(
-            f"""<audio autoplay><source src="data:audio/mp3;base64,{b64}" type="audio/mp3"></audio>""",
-            unsafe_allow_html=True,
-        )
-    except FileNotFoundError:
-        pass
-
 def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
     ui_section("📝 النوط الداخلية", "📝")
 
-    # ✍️ إضافة ملاحظة جديدة (إرسال لموظف آخر)
+    # ✍️ إرسال نوط لموظف آخر
     with st.expander("✍️ إرسال نوط لموظف آخر", expanded=True):
         col1, col2 = st.columns([1,2])
         with col1:
@@ -209,22 +190,19 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
             receiver = st.selectbox("الموظّف المستلم", receivers)
         with col2:
             message = st.text_area("الملاحظة", placeholder="اكتب ملاحظة قصيرة...")
-
         if st.button("إرسال ✅", use_container_width=True):
             ok, info = inter_notes_append(current_employee, receiver, message)
             st.success("تم الإرسال 👌") if ok else st.error(f"تعذّر الإرسال: {info}")
 
-    # تنبيه أوتوماتيكي
+    # تحديث تلقائي بسيط
     _autorefresh = getattr(st, "autorefresh", None) or getattr(st, "experimental_autorefresh", None)
     if callable(_autorefresh): _autorefresh(interval=10_000, key="inter_notes_poll")
 
     if "prev_unread_count" not in st.session_state: st.session_state.prev_unread_count = 0
     unread_df = inter_notes_fetch_unread(current_employee); unread_count = len(unread_df)
-    try:
-        if unread_count > st.session_state.prev_unread_count:
-            st.toast("📩 نوط جديدة وصْلتك!", icon="✉️"); play_sound_mp3()
-    finally:
-        st.session_state.prev_unread_count = unread_count
+    if unread_count > st.session_state.prev_unread_count:
+        st.toast("📩 نوط جديدة وصْلتك!", icon="✉️")
+    st.session_state.prev_unread_count = unread_count
 
     st.markdown(f"### 📥 غير المقروء: **{unread_count}**")
     if unread_count == 0:
@@ -293,7 +271,10 @@ def fin_month_title(mois: str, kind: str, branch: str):
     short = "MB" if "Menzel" in branch else "BZ"
     return f"{prefix}{mois} ({short})"
 
-# ===== FIX: لا تنشئ ورقة أثناء التجميع الشهري + تحكّم في الإنشاء =====
+def _to_num_series(s):
+    return s.astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False).pipe(pd.to_numeric, errors="coerce").fillna(0.0)
+
+# ===== لا تنشئ ورقة أثناء التجميع الشهري + تحكّم في الإنشاء =====
 def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str], create_if_missing: bool = True):
     """يرجّع worksheet أو None إذا مش موجود و create_if_missing=False"""
     sh = client.open_by_key(sheet_id)
@@ -323,9 +304,6 @@ def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str], create_
             try: ws.update("1:1", [columns])
             except gspread.exceptions.APIError: pass
     return ws
-
-def _to_num_series(s):
-    return s.astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False).pipe(pd.to_numeric, errors="coerce").fillna(0.0)
 
 def fin_read_df(client, sheet_id: str, title: str, kind: str, create_if_missing: bool = True) -> pd.DataFrame:
     cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
@@ -425,7 +403,7 @@ def load_all_data():
         if title.endswith("_PAIEMENTS"): continue
         if title.startswith("_"): continue
         if title.startswith("Revenue ") or title.startswith("Dépense "): continue
-        if title in (INTER_NOTES_SHEET, "TransferLog"): continue
+        if title in ("InterNotes","TransferLog"): continue
         all_employes.append(title)
         rows = ws.get_all_values()
         if not rows:
@@ -495,7 +473,7 @@ def admin_lock_ui():
                 else: st.error("كلمة سرّ غير صحيحة.")
 if role == "أدمن": admin_lock_ui()
 
-# ---------------- Finance Tab ----------------
+# ---------------- Finance helpers ----------------
 @st.cache_data(ttl=300)
 def collect_monthly_finance():
     """DF لكل الأشهر (الفرعين) بدون إنشاء أوراق ناقصة."""
@@ -503,8 +481,14 @@ def collect_monthly_finance():
     rows = []
     for branch in ["Menzel Bourguiba", "Bizerte"]:
         for mois in months:
-            rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus", create_if_missing=False)
-            dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses", create_if_missing=False)
+            try:
+                rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus", create_if_missing=False)
+            except Exception:
+                rev = pd.DataFrame(columns=FIN_REV_COLUMNS)
+            try:
+                dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses", create_if_missing=False)
+            except Exception:
+                dep = pd.DataFrame(columns=FIN_DEP_COLUMNS)
             revenus_AS = float(rev["Montant_Total"].sum()) if "Montant_Total" in rev.columns else 0.0
             depenses    = float(dep["Montant"].sum())      if "Montant" in dep.columns else 0.0
             reste       = float(rev["Reste"].sum())        if "Reste" in rev.columns else 0.0
@@ -520,6 +504,7 @@ def collect_monthly_finance():
     df["mois"] = pd.Categorical(df["mois"], categories=FIN_MONTHS_FR, ordered=True)
     return df.sort_values(["mois", "branch"])
 
+# ---------------- Finance Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     ui_section("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)", "💸")
     with st.sidebar:
@@ -539,6 +524,8 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     fin_title = fin_month_title(mois, kind, branch)
     df_fin = fin_read_df(client, SPREADSHEET_ID, fin_title, kind); df_view = df_fin.copy()
+
+    # الموظف يشوف كان معاملاتو
     if role == "موظف" and employee and "Employé" in df_view.columns:
         df_view = df_view[df_view["Employé"].fillna("").str.strip().str.lower() == employee.strip().lower()]
 
@@ -558,9 +545,14 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     ui_section(f"{'💰' if kind=='Revenus' else '🧾'} {fin_title}", "🗂️")
     df_view = safe_unique_columns(df_view)
-    cols_show = (["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Alert","Mode","Employé","Catégorie","Note"]
-                 if kind=="Revenus" else
-                 ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"])
+    if kind == "Revenus":
+        cols_show = ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Alert","Mode","Employé","Catégorie","Note"]
+    else:
+        # ⚠️ المصاريف: نخليها للجميع، لكن المبلغ يظهر للأدمن فقط
+        cols_show = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
+        if role != "أدمن":
+            # نخفي العمود Montant للموظف
+            cols_show = [c for c in cols_show if c != "Montant"]
     cols_show = [c for c in cols_show if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
     ui_section_end()
@@ -573,8 +565,8 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         ui_section_end()
 
         # KPIs للفرع/الشهر الحالي
-        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
-        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus", create_if_missing=False)
+        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses", create_if_missing=False)
         sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
         sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
         sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
@@ -640,7 +632,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             prix = r1.number_input("💰 Prix (سعر التكوين)", min_value=0.0, step=10.0)
             montant_admin  = r2.number_input("🏢 Montant Admin", min_value=0.0, step=10.0)
             montant_struct = r3.number_input("🏫 Montant Structure", min_value=0.0, step=10.0)
-            r4, r5 = st.columns(2)
+            r4, _ = st.columns(2)
             montant_preins = r4.number_input("📝 Montant Pré-Inscription", min_value=0.0, step=10.0, help="اختياري")
             montant_total  = float(montant_admin) + float(montant_struct)
             e1, e2, e3 = st.columns(3)
@@ -754,7 +746,7 @@ grp_base = (df_stats.groupby("__sheet_name", dropna=False)
          Inscrits=("Inscription_norm", lambda x: (x=="oui").sum()),
          تنبيهات=("__has_alert","sum"),
          مضافون_اليوم=("__added_today","sum"),
-         مسجلون_اليوم=("__reg_today","sum")).reset_index()
+         مسجلون_اليوم=("::__reg_today","sum") if False else ("__reg_today","sum")).reset_index()
     .rename(columns={"__sheet_name":"الموظف"}))
 grp_base["% تسجيل"] = ((grp_base["Inscrits"] / grp_base["Clients"]).replace([float("inf"), float("nan")], 0) * 100).round(2)
 grp_base = grp_base.sort_values(by=["تنبيهات","Clients"], ascending=[False, False])
@@ -809,7 +801,7 @@ if role == "موظف" and employee:
         ui_section_end()
 
     if not filtered_df.empty:
-        # نعرض عدّاد اللي بلا ملاحظات (بدون تأثير على المسجّلين)
+        # نكتفي بعدّاد “بلا ملاحظات”
         pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
         ui_badge(f"⏳ مضافين بلا ملاحظات: {int(pending_mask.sum())}", "orange")
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
@@ -824,7 +816,7 @@ if role == "موظف" and employee:
         alerts_df = _df[_df["Alerte"].fillna("").astype(str).str.strip() != ""]
         render_table(alerts_df, "🚨 عملاء مع تنبيهات")
 
-    # ✏️ تعديل بيانات عميل
+    # ✏️ تعديل بيانات عميل (مع استبدال الملاحظة الكاملة)
     if not df_emp.empty:
         ui_section("✏️ تعديل بيانات عميل", "✏️")
         df_emp_edit = df_emp.copy(); df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
@@ -936,7 +928,7 @@ if role == "موظف" and employee:
                 ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
                 tel = normalize_tn_phone(tel_raw)
                 if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
-                if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
+                if tel in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
                 insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
                 ws.append_row([nom, tel, type_contact, formation, "", fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""])
                 st.success("✅ تم إضافة العميل"); st.cache_data.clear()
