@@ -9,13 +9,12 @@
 # - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
 # - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
-# - 🆕 Log نقل العملاء في ورقة _TransfersLog
-# - 🆕 ملخص Pré-Inscription (شهري + تراكمي) في تبويب المداخيل/المصاريف
 
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
+from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
@@ -51,12 +50,36 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
+# ========= Helper: open sheet safely with clear error =========
+def open_sheet_safe(client, sheet_id: str):
+    try:
+        return client.open_by_key(sheet_id)
+    except APIError as e:
+        # حاول نجيب إيميل الـ service account للشرح
+        sa_email = ""
+        try:
+            sa = st.secrets.get("gcp_service_account", None)
+            if sa:
+                sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
+                sa_email = sa_info.get("client_email", "")
+        except Exception:
+            pass
+
+        st.error(
+            "⚠️ تعذّر فتح Google Sheet.\n\n"
+            f"- تأكّد من **SPREADSHEET_ID**: `{sheet_id}`\n"
+            f"- وشارك الملف مع هذا الإيميل (Service Account): **{sa_email or '<<service-account-email>>'}**\n"
+            "- أو أنّ الملف تم حذفه/نقله.\n"
+            f"تفاصيل تقنية: {e}"
+        )
+        st.stop()
+
 # ============================ 🆕 InterNotes (نوط داخلية) ============================
 INTER_NOTES_SHEET = "InterNotes"  # تُنشأ تلقائيًا لو مش موجودة
 INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
 
 def inter_notes_open_ws():
-    sh = client.open_by_key(SPREADSHEET_ID)
+    sh = open_sheet_safe(client, SPREADSHEET_ID)
     try:
         ws = sh.worksheet(INTER_NOTES_SHEET)
     except gspread.WorksheetNotFound:
@@ -212,7 +235,7 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 except:
                     return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=True)
             st.dataframe(disp, use_container_width=True, height=320)
 
 
@@ -252,7 +275,7 @@ def fin_month_title(mois: str, kind: str, branch: str):
     return f"{prefix}{mois} ({short})"
 
 def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
-    sh = client.open_by_key(sheet_id)
+    sh = open_sheet_safe(client, sheet_id)
     try:
         ws = sh.worksheet(title)
     except Exception:
@@ -379,7 +402,7 @@ def _emp_lock_ui(emp_name: str):
 # ---------------- Load all CRM data (hide non-employee sheets) ----------------
 @st.cache_data(ttl=600)
 def load_all_data():
-    sh = client.open_by_key(SPREADSHEET_ID)
+    sh = open_sheet_safe(client, SPREADSHEET_ID)
     worksheets = sh.worksheets()
     all_dfs, all_employes = [], []
 
@@ -456,64 +479,6 @@ def admin_lock_ui():
 if role == "أدمن":
     admin_lock_ui()
 
-# ---------------- 🆕 Helpers: actor + reassign log + preins summaries ----------------
-REASSIGN_LOG_SHEET = "_TransfersLog"
-REASSIGN_LOG_HEADERS = ["timestamp","by","from","to","client_name","phone"]
-
-def _actor_name():
-    # من هو الذي يقوم بالفعل الآن (موظّف أو Admin)
-    if role == "موظف" and employee:
-        return employee
-    return "Admin"
-
-def _log_reassign(by: str, src: str, dst: str, client_name: str, phone_norm: str):
-    try:
-        sh = client.open_by_key(SPREADSHEET_ID)
-        try:
-            ws = sh.worksheet(REASSIGN_LOG_SHEET)
-        except gspread.WorksheetNotFound:
-            ws = sh.add_worksheet(title=REASSIGN_LOG_SHEET, rows="2000", cols=str(len(REASSIGN_LOG_HEADERS)))
-            ws.update("1:1", [REASSIGN_LOG_HEADERS])
-        ts = datetime.now(timezone.utc).isoformat()
-        ws.append_row([ts, by, src, dst, client_name, phone_norm])
-    except Exception:
-        pass  # ما نكسّرش الفلو لو فشل اللوق
-
-def _months_up_to(selected_mois: str):
-    # يرجّع قائمة الأشهر من Janvier إلى الشهر المختار (بالاسم الفرنسي)
-    if selected_mois not in FIN_MONTHS_FR:
-        return []
-    idx = FIN_MONTHS_FR.index(selected_mois)
-    return FIN_MONTHS_FR[:idx+1]
-
-def _preins_summaries(branch: str, up_to_mois: str):
-    """يرجّع:
-       this_month: (rev_preins, dep_inscr, reste)
-       cumulative: (rev_preins, dep_inscr, reste)
-       table_by_month: DataFrame لكل شهر حتى المختار
-    """
-    mois_list = _months_up_to(up_to_mois)
-    rows = []
-    cum_rev = cum_dep = 0.0
-    for m in mois_list:
-        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Revenus", branch), "Revenus")
-        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Dépenses", branch), "Dépenses")
-        rev_pre = float(rev_df["Montant_PreInscription"].sum()) if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
-        dep_ins = float(dep_df.loc[dep_df.get("Caisse_Source","")=="Caisse_Inscription","Montant"].sum()) if not dep_df.empty else 0.0
-        reste   = rev_pre - dep_ins
-        rows.append({"Mois": m, "Pré-Inscription (Revenus)": rev_pre, "Dépenses (Inscription)": dep_ins, "Reste": reste})
-        cum_rev += rev_pre
-        cum_dep += dep_ins
-
-    table_df = pd.DataFrame(rows) if rows else pd.DataFrame(columns=["Mois","Pré-Inscription (Revenus)","Dépenses (Inscription)","Reste"])
-    # هذا الشهر:
-    this_rev = rows[-1]["Pré-Inscription (Revenus)"] if rows else 0.0
-    this_dep = rows[-1]["Dépenses (Inscription)"] if rows else 0.0
-    this_res = rows[-1]["Reste"] if rows else 0.0
-    # تراكمي:
-    cum_res = cum_rev - cum_dep
-    return (this_rev, this_dep, this_res), (cum_rev, cum_dep, cum_res), table_df
-
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
@@ -571,26 +536,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
-    # ====================== 🆕 Pré-Inscription: هذا الشهر + تراكمي ======================
-    with st.expander("📝 Pré-Inscription — هذا الشهر + تراكمي", expanded=True):
-        (this_rev, this_dep, this_res), (cum_rev, cum_dep, cum_res), table_df = _preins_summaries(branch, mois)
-
-        st.markdown("#### هذا الشهر")
-        a1, a2, a3 = st.columns(3)
-        a1.metric("مداخيل Pré-Inscription", f"{this_rev:,.2f}")
-        a2.metric("مصاريف Caisse_Inscription", f"{this_dep:,.2f}")
-        a3.metric("الباقي (هذا الشهر)", f"{this_res:,.2f}")
-
-        st.markdown("#### تراكمي حتى هذا الشهر")
-        b1, b2, b3 = st.columns(3)
-        b1.metric("مداخيل تراكمية", f"{cum_rev:,.2f}")
-        b2.metric("مصاريف تراكمية", f"{cum_dep:,.2f}")
-        b3.metric("الباقي التراكمي", f"{cum_res:,.2f}")
-
-        st.markdown("#### جدول شهري (من بداية السنة)")
-        st.dataframe(table_df, use_container_width=True)
-
-    # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
@@ -975,7 +920,8 @@ if role == "موظف" and employee:
 
             if st.button("💾 حفظ التعديلات", key="save_all_edits"):
                 try:
-                    ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
+                    ws = sh.worksheet(employee)
                     row_idx = find_row_by_phone(ws, normalize_tn_phone(chosen_phone))
                     if not row_idx:
                         st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
@@ -1022,7 +968,8 @@ if role == "موظف" and employee:
         new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
         if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 if "Téléphone" in header:
@@ -1052,7 +999,8 @@ if role == "موظف" and employee:
         hex_color = st.color_picker("اختر اللون")
         if st.button("🖌️ تلوين"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 values = ws.get_all_values()
                 header = values[0] if values else []
                 row_idx = None
@@ -1084,7 +1032,8 @@ if role == "موظف" and employee:
             date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
         if st.form_submit_button("📥 أضف العميل"):
             try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                sh = open_sheet_safe(client, SPREADSHEET_ID)
+                ws = sh.worksheet(employee)
                 tel = normalize_tn_phone(tel_raw)
                 if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
                 if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
@@ -1114,7 +1063,7 @@ if role == "موظف" and employee:
             phone_pick = normalize_tn_phone(pick.split("—")[-1])
             if st.button("🚚 نقل الآن"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
                     ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
                     values = ws_src.get_all_values()
                     header = values[0] if values else []
@@ -1131,11 +1080,8 @@ if role == "موظف" and employee:
                             row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
                         row_values = row_values[:len(EXPECTED_HEADERS)]
                         row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                        client_name_for_log = row_values[EXPECTED_HEADERS.index("Nom & Prénom")]
                         ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
-                        # 🆕 سجل عملية النقل
-                        _log_reassign(_actor_name(), src_emp, dst_emp, client_name_for_log, phone_pick)
-                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp} — تم التسجيل في السجل"); st.cache_data.clear()
+                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
@@ -1181,7 +1127,7 @@ if role == "أدمن":
             new_emp = st.text_input("اسم الموظّف الجديد")
             if st.button("إنشاء ورقة"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
+                    sh = open_sheet_safe(client, SPREADSHEET_ID)
                     titles = [w.title for w in sh.worksheets()]
                     if not new_emp or new_emp in titles:
                         st.warning("⚠️ الاسم فارغ أو موجود.")
@@ -1194,7 +1140,7 @@ if role == "أدمن":
 
         with colB:
             st.subheader("➕ إضافة عميل (لأي موظّف)")
-            sh = client.open_by_key(SPREADSHEET_ID)
+            sh = open_sheet_safe(client, SPREADSHEET_ID)
             target_emp = st.selectbox("اختر الموظّف", all_employes, key="admin_add_emp")
             nom_a = st.text_input("👤 الاسم و اللقب", key="admin_nom")
             tel_a_raw = st.text_input("📞 الهاتف", key="admin_tel")
@@ -1218,10 +1164,10 @@ if role == "أدمن":
 
         with colC:
             st.subheader("🗑️ حذف موظّف")
+            sh = open_sheet_safe(client, SPREADSHEET_ID)
             emp_to_delete = st.selectbox("اختر الموظّف", all_employes, key="admin_del_emp")
             if st.button("❗ حذف الورقة كاملة"):
                 try:
-                    sh = client.open_by_key(SPREADSHEET_ID)
                     sh.del_worksheet(sh.worksheet(emp_to_delete))
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e:
