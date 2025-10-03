@@ -9,8 +9,6 @@
 # - ملخّص شهري تفصيلي: يظهر للأدمن فقط
 # - إخفاء أوراق *_PAIEMENTS و "_" و أوراق المالية من قائمة الموظفين
 # - 🆕 تبويب "📝 نوط داخلية": رسائل بين الموظفين + صوت + Popup + مراقبة للأدمن
-# - 🆕 سجلّ نقل العملاء في ورقة _Transfers_Log
-# - 🆕 ملخص شهري متراكم لــ Inscription (Pré-Inscription) للشهر الحالي والأشهر السابقة
 
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
@@ -212,8 +210,9 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 except:
                     return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False)
+            disp = df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", descending=False)
             st.dataframe(disp, use_container_width=True, height=320)
+
 
 # ---------------- Schemas ----------------
 EXPECTED_HEADERS = [
@@ -231,7 +230,6 @@ FIN_REV_COLUMNS = [
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
 
-# ---------------- Small helpers ----------------
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return df
@@ -239,7 +237,6 @@ def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = pd.Index(df.columns).astype(str)
     return df.loc[:, ~df.columns.duplicated(keep="first")]
 
-# ---------------- Finance helpers ----------------
 def _branch_passwords():
     try:
         b = st.secrets["branch_passwords"]
@@ -316,7 +313,6 @@ def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     vals = [str(row.get(col, "")) for col in header]
     ws.append_row(vals)
 
-# ---------------- Common helpers ----------------
 def fmt_date(d: date | None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
@@ -458,27 +454,6 @@ def admin_lock_ui():
 if role == "أدمن":
     admin_lock_ui()
 
-# ======================= 🆕 Transfer Log helpers =======================
-TRANSFER_SHEET = "_Transfers_Log"
-TRANSFER_HEADERS = ["timestamp","by","from","to","client_name","client_phone"]
-
-def _open_transfer_ws():
-    sh = client.open_by_key(SPREADSHEET_ID)
-    try:
-        ws = sh.worksheet(TRANSFER_SHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=TRANSFER_SHEET, rows="1000", cols=str(len(TRANSFER_HEADERS)))
-        ws.update("1:1", [TRANSFER_HEADERS])
-    return ws
-
-def log_transfer(by: str, src: str, dst: str, name: str, phone: str):
-    try:
-        ws = _open_transfer_ws()
-        ts = datetime.now(timezone.utc).isoformat()
-        ws.append_row([ts, by, src, dst, name, phone])
-    except Exception:
-        pass  # ما نكسرش الفلو لو اللوج يفشل
-
 # ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
@@ -507,7 +482,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
     fin_title = fin_month_title(mois, kind, branch)
 
-    # قراءة + فلاتر
     df_fin = fin_read_df(client, SPREADSHEET_ID, fin_title, kind)
     df_view = df_fin.copy()
 
@@ -537,7 +511,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
-    # ====================== ملخص شهري تفصيلي (للأدمن فقط) ======================
     if role == "أدمن" and admin_unlocked():
         with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
             rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
@@ -584,44 +557,6 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
             x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
 
-    # ====================== 🆕 Inscription عبر الأشهر ======================
-    with st.expander("📅 Inscription (Pré-Inscription) — هذا الشهر والأشهر السابقة", expanded=True):
-        # نحسب من بداية السنة للشهر المختار
-        current_idx = FIN_MONTHS_FR.index(mois)
-        months_to_show = FIN_MONTHS_FR[:current_idx+1]
-
-        rows = []
-        cum_reste = 0.0
-        for m in months_to_show:
-            rev_m = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Revenus", branch), "Revenus")
-            dep_m = fin_read_df(client, SPREADSHEET_ID, fin_month_title(m, "Dépenses", branch), "Dépenses")
-
-            preins = rev_m["Montant_PreInscription"].sum() if "Montant_PreInscription" in rev_m.columns else 0.0
-            dep_ins = dep_m.loc[dep_m.get("Caisse_Source","")=="Caisse_Inscription", "Montant"].sum() if ("Caisse_Source" in dep_m.columns and "Montant" in dep_m.columns) else 0.0
-            reste = float(preins) - float(dep_ins)
-            cum_reste += reste
-
-            rows.append({
-                "Mois": m,
-                "Pré-Inscription (Revenus)": round(float(preins), 2),
-                "Dépenses Inscription": round(float(dep_ins), 2),
-                "Reste (شهري)": round(float(reste), 2),
-                "Reste تراكمي": round(float(cum_reste), 2)
-            })
-
-        df_ins_overview = pd.DataFrame(rows)
-        # مؤشرات للشهر الحالي
-        this_row = df_ins_overview[df_ins_overview["Mois"] == mois].iloc[0] if not df_ins_overview.empty else None
-        r1, r2, r3, r4 = st.columns(4)
-        if this_row is not None:
-            r1.metric("Pré-Inscription (هذا الشهر)", f"{this_row['Pré-Inscription (Revenus)']:,.2f}")
-            r2.metric("Dépenses Inscription (هذا الشهر)", f"{this_row['Dépenses Inscription']:,.2f}")
-            r3.metric("Reste (هذا الشهر)", f"{this_row['Reste (شهري)']:,.2f}")
-            r4.metric("Reste تراكمي حتى هذا الشهر", f"{this_row['Reste تراكمي']:,.2f}")
-
-        st.dataframe(df_ins_overview, use_container_width=True)
-
-    # ====================== إضافة عملية جديدة ======================
     st.markdown("---")
     st.markdown("### ➕ إضافة عملية جديدة")
 
@@ -676,7 +611,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
             note = st.text_area("Note", value=note_default)
 
-            rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
+            rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_title, "Revenus")
             paid_so_far = 0.0
             if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
                 same = rev_df_current[rev_df_current["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()]
@@ -699,7 +634,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                     st.error("المبلغ لازم > 0 (Admin/Structure أو Pré-Inscription).")
                 else:
                     fin_append_row(
-                        client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch),
+                        client, SPREADSHEET_ID, fin_title,
                         {
                             "Date": fmt_date(date_val),
                             "Libellé": libelle.strip(),
@@ -736,7 +671,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                     st.error("المبلغ لازم > 0.")
                 else:
                     fin_append_row(
-                        client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch),
+                        client, SPREADSHEET_ID, fin_title,
                         {
                             "Date": fmt_date(date_val),
                             "Libellé": libelle.strip(),
@@ -994,4 +929,219 @@ if role == "موظف" and employee:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
 
     # ---------------- Quick notes & Tag ----------------
-    if not df_emp
+    if not df_emp.empty:
+        st.markdown("### 📝 أضف ملاحظة (سريعة)")
+        scope_df = filtered_df if not filtered_df.empty else df_emp
+        scope_df = scope_df.copy(); scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+        tel_to_update_key = st.selectbox(
+            "اختر العميل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+            key="note_quick_pick"
+        )
+        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
+        new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
+        if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                values = ws.get_all_values()
+                header = values[0] if values else []
+                if "Téléphone" in header:
+                    tel_idx = header.index("Téléphone")
+                    row_idx = None
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update:
+                            row_idx = i; break
+                    if not row_idx: st.error("❌ الهاتف غير موجود.")
+                    else:
+                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
+                        old_remark = ws.cell(row_idx, rem_col).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
+                        ws.update_cell(row_idx, rem_col, updated)
+                        st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
+
+        st.markdown("### 🎨 اختر لون/Tag للعميل")
+        tel_color_key = st.selectbox(
+            "اختر العميل",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+            key="tag_select"
+        )
+        tel_color = normalize_tn_phone(tel_color_key.split("—")[-1])
+        hex_color = st.color_picker("اختر اللون")
+        if st.button("🖌️ تلوين"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                values = ws.get_all_values()
+                header = values[0] if values else []
+                row_idx = None
+                if "Téléphone" in header:
+                    tel_idx = header.index("Téléphone")
+                    for i, r in enumerate(values[1:], start=2):
+                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_color:
+                            row_idx = i; break
+                if not row_idx: st.error("❌ لم يتم إيجاد العميل.")
+                else:
+                    color_cell = EXPECTED_HEADERS.index("Tag") + 1
+                    ws.update_cell(row_idx, color_cell, hex_color)
+                    st.success("✅ تم التلوين"); st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
+
+    # ---------------- Add client ----------------
+    st.markdown("### ➕ أضف عميل جديد")
+    with st.form("emp_add_client"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nom = st.text_input("👤 الاسم و اللقب")
+            tel_raw = st.text_input("📞 رقم الهاتف")
+            formation = st.text_input("📚 التكوين")
+            inscription = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"])
+        with col2:
+            type_contact = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"])
+            date_ajout_in = st.date_input("🕓 تاريخ الإضافة", value=date.today())
+            date_suivi_in = st.date_input("📆 تاريخ المتابعة", value=date.today())
+        if st.form_submit_button("📥 أضف العميل"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                tel = normalize_tn_phone(tel_raw)
+                if not(nom and tel and formation): st.error("❌ حقول أساسية ناقصة."); st.stop()
+                if tel in ALL_PHONES: st.warning("⚠️ الرقم موجود مسبقًا."); st.stop()
+                insc_val = "Oui" if inscription == "Inscrit" else "Pas encore"
+                ws.append_row([nom, tel, type_contact, formation, "", fmt_date(date_ajout_in), fmt_date(date_suivi_in), "", insc_val, employee, ""])
+                st.success("✅ تم إضافة العميل"); st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء الإضافة: {e}")
+
+    # ---------------- Reassign + WhatsApp ----------------
+    st.markdown("### 🔁 نقل عميل بين الموظفين")
+    if all_employes:
+        colRA, colRB = st.columns(2)
+        with colRA:
+            src_emp = st.selectbox("من موظّف", all_employes, key="reassign_src")
+        with colRB:
+            dst_emp = st.selectbox("إلى موظّف", [e for e in all_employes if e != src_emp], key="reassign_dst")
+        df_src = df_all[df_all["__sheet_name"] == src_emp].copy()
+        if df_src.empty:
+            st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+        else:
+            pick = st.selectbox(
+                "اختر العميل للنقل",
+                [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()],
+                key="reassign_pick"
+            )
+            phone_pick = normalize_tn_phone(pick.split("—")[-1])
+            if st.button("🚚 نقل الآن"):
+                try:
+                    sh = client.open_by_key(SPREADSHEET_ID)
+                    ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
+                    values = ws_src.get_all_values()
+                    header = values[0] if values else []
+                    row_idx = None
+                    if "Téléphone" in header:
+                        tel_idx = header.index("Téléphone")
+                        for i, r in enumerate(values[1:], start=2):
+                            if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == phone_pick:
+                                row_idx = i; break
+                    if not row_idx: st.error("❌ لم يتم العثور على هذا العميل.")
+                    else:
+                        row_values = ws_src.row_values(row_idx)
+                        if len(row_values) < len(EXPECTED_HEADERS):
+                            row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
+                        row_values = row_values[:len(EXPECTED_HEADERS)]
+                        row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                        ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
+                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء النقل: {e}")
+
+    st.markdown("### 💬 تواصل WhatsApp")
+    if not df_emp.empty:
+        wa_pick = st.selectbox(
+            "اختر العميل لفتح واتساب",
+            [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_emp.iterrows()],
+            key="wa_pick"
+        )
+        default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقو معاك موعد المتابعة. 👍"
+        wa_msg = st.text_area("الرسالة (WhatsApp)", value=default_msg, key="wa_msg")
+        if st.button("📲 فتح WhatsApp"):
+            try:
+                raw_tel = wa_pick.split("—")[-1]
+                tel_norm = normalize_tn_phone(raw_tel)
+                url = f"https://wa.me/{tel_norm}?text={urllib.parse.quote(wa_msg)}"
+                st.markdown(f"[افتح المحادثة الآن]({url})")
+                st.info("اضغط على الرابط لفتح واتساب في نافذة/تبويب جديد.")
+            except Exception as e:
+                st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
+
+# ---------------- 📝 نوط داخلية Tab ----------------
+if tab_choice == "📝 نوط داخلية":
+    current_emp_name = (employee if (role == "موظف" and employee) else "Admin")
+    is_admin_user = (role == "أدمن")
+    inter_notes_ui(
+        current_employee=current_emp_name,
+        all_employees=all_employes,
+        is_admin=is_admin_user
+    )
+
+# ---------------- Admin Page ----------------
+if role == "أدمن":
+    st.markdown("## 👑 لوحة الأدمِن")
+    if not admin_unlocked():
+        st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح الصفحة.")
+    else:
+        colA, colB, colC = st.columns(3)
+
+        with colA:
+            st.subheader("➕ إضافة موظّف")
+            new_emp = st.text_input("اسم الموظّف الجديد")
+            if st.button("إنشاء ورقة"):
+                try:
+                    sh = client.open_by_key(SPREADSHEET_ID)
+                    titles = [w.title for w in sh.worksheets()]
+                    if not new_emp or new_emp in titles:
+                        st.warning("⚠️ الاسم فارغ أو موجود.")
+                    else:
+                        sh.add_worksheet(title=new_emp, rows="1000", cols="20")
+                        sh.worksheet(new_emp).update("1:1", [EXPECTED_HEADERS])
+                        st.success("✔️ تم الإنشاء"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+
+        with colB:
+            st.subheader("➕ إضافة عميل (لأي موظّف)")
+            sh = client.open_by_key(SPREADSHEET_ID)
+            target_emp = st.selectbox("اختر الموظّف", all_employes, key="admin_add_emp")
+            nom_a = st.text_input("👤 الاسم و اللقب", key="admin_nom")
+            tel_a_raw = st.text_input("📞 الهاتف", key="admin_tel")
+            formation_a = st.text_input("📚 التكوين", key="admin_form")
+            type_contact_a = st.selectbox("نوع التواصل", ["Visiteur","Appel téléphonique","WhatsApp","Social media"], key="admin_type")
+            inscription_a = st.selectbox("التسجيل", ["Pas encore","Inscrit"], key="admin_insc")
+            date_ajout_a = st.date_input("تاريخ الإضافة", value=date.today(), key="admin_dt_add")
+            suivi_date_a = st.date_input("تاريخ المتابعة", value=date.today(), key="admin_dt_suivi")
+            if st.button("📥 أضف"):
+                try:
+                    if not (nom_a and tel_a_raw and formation_a and target_emp): st.error("❌ حقول ناقصة."); st.stop()
+                    tel_a = normalize_tn_phone(tel_a_raw)
+                    if tel_a in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود.")
+                    else:
+                        insc_val = "Oui" if inscription_a=="Inscrit" else "Pas encore"
+                        ws = sh.worksheet(target_emp)
+                        ws.append_row([nom_a, tel_a, type_contact_a, formation_a, "", fmt_date(date_ajout_a), fmt_date(suivi_date_a), "", insc_val, target_emp, ""])
+                        st.success("✅ تمت الإضافة"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+
+        with colC:
+            st.subheader("🗑️ حذف موظّف")
+            emp_to_delete = st.selectbox("اختر الموظّف", all_employes, key="admin_del_emp")
+            if st.button("❗ حذف الورقة كاملة"):
+                try:
+                    sh = client.open_by_key(SPREADSHEET_ID)
+                    sh.del_worksheet(sh.worksheet(emp_to_delete))
+                    st.success("تم الحذف"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+
+        st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
