@@ -1,7 +1,6 @@
 # MegaCRM_Streamlit_App_PRO_Light.py
 # ===============================================================================================================
-# واجهة فاتحة + أزرار 3D + CRM + مداخيل/مصاريف (MB/Bizerte) + نوط داخلية + واتساب + نقل العملاء + لوج للنقل
-# + ملخصات شهرية (A+S / مصاريف / Reste / Prix=مبلغ المسجلين) للأدمن — دون حذف أي سكشن قديم
+# CRM + Revenus/Dépenses (MB/Bizerte) + Pré-Inscription + نوط داخلية — واجهة فاتحة + أزرار 3D + ملخّص شهري + لوج نقل
 # ===============================================================================================================
 
 import json, time, urllib.parse, base64, uuid, re
@@ -15,14 +14,14 @@ from PIL import Image
 # ---------------- Page config ----------------
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 
-# =============== 🎨 UI SKIN — LIGHT (Clear, Professional, Real Buttons) ===============
+# =============== 🎨 UI SKIN — LIGHT (Real Buttons) ===============
 def inject_pro_ui():
     st.markdown("""
     <style>
       @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
       :root{
         --bg:#f7f9fc; --card:#ffffff; --text:#1a1f36; --muted:#5b6b82;
-        --border:#e7ecf3; --accent:#2563eb; --accent-2:#3b82f6; --accent-3:#1d4ed8;
+        --border:#e7ecf3; --accent:#2563eb; --accent-2:#3b82f6;
         --success:#16a34a; --warning:#d97706; --danger:#dc2626; --radius:14px;
       }
       html, body, [data-testid="stAppViewContainer"]{
@@ -32,64 +31,62 @@ def inject_pro_ui():
       }
       [data-testid="stSidebar"]{ background: #fbfdff !important; border-right: 1px solid var(--border) !important; }
 
-      /* ---------- Real Buttons (3D look) ---------- */
+      /* Real 3D Buttons */
       .stButton>button, .stDownloadButton>button{
-        position: relative !important; appearance:none !important; border-radius:12px !important;
-        background: linear-gradient(180deg, var(--accent-2), var(--accent)) !important; color:#fff !important;
-        border:1px solid #1e40af !important; padding:.65rem 1.1rem !important; font-weight:800 !important; letter-spacing:.2px !important;
-        box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,.25), 0 0 0 1px rgba(255,255,255,.6) inset;
+        position: relative !important; appearance: none !important; border-radius: 12px !important;
+        background: linear-gradient(180deg, var(--accent-2), var(--accent)) !important; color: #fff !important;
+        border: 1px solid #1e40af !important; padding: 0.65rem 1.1rem !important;
+        font-weight: 800 !important; letter-spacing: .2px !important;
+        box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,0.25), 0 0 0 1px rgba(255,255,255,0.6) inset;
         transition: transform .06s ease, box-shadow .12s ease, filter .15s ease;
       }
       .stButton>button:hover, .stDownloadButton>button:hover{
         filter: brightness(1.03);
-        box-shadow: 0 2px 0 #153e94 inset, 0 10px 22px rgba(37,99,235,.30), 0 0 0 1px rgba(255,255,255,.65) inset;
+        box-shadow: 0 2px 0 #153e94 inset, 0 10px 22px rgba(37,99,235,0.30), 0 0 0 1px rgba(255,255,255,0.65) inset;
       }
       .stButton>button:active, .stDownloadButton>button:active{
         transform: translateY(1px);
-        box-shadow: 0 1px 0 #153e94 inset, 0 6px 14px rgba(37,99,235,.22), 0 0 0 1px rgba(255,255,255,.55) inset;
+        box-shadow: 0 1px 0 #153e94 inset, 0 6px 14px rgba(37,99,235,0.22), 0 0 0 1px rgba(255,255,255,0.55) inset;
       }
       .stButton>button:focus-visible, .stDownloadButton>button:focus-visible{
         outline: none !important;
-        box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,.25), 0 0 0 3px rgba(37,99,235,.35) !important;
+        box-shadow: 0 2px 0 #153e94 inset, 0 8px 18px rgba(37,99,235,0.25), 0 0 0 3px rgba(37,99,235,0.35) !important;
       }
 
       /* Inputs */
       .stTextInput>div>div>input, .stTextArea textarea, .stSelectbox>div>div>div>div,
       .stDateInput>div>div>input, .stNumberInput input{
-        background:#fff !important; color:var(--text) !important; border-radius:12px !important; border:1px solid var(--border) !important;
-        box-shadow: 0 1px 0 rgba(0,0,0,.02) inset !important;
+        background: #ffffff !important; color: var(--text) !important;
+        border-radius: 12px !important; border: 1px solid var(--border) !important;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.02) inset !important;
       }
-      .stTextArea textarea{ min-height:110px !important; }
+      .stTextArea textarea{ min-height: 110px !important; }
 
-      /* Cards/Sections */
+      /* Cards */
       .topbar{
-        border-radius:18px; padding:18px 22px; background:linear-gradient(135deg,#ffffff,#f3f7ff);
-        border:1px solid var(--border); box-shadow:0 12px 30px rgba(16,24,40,.08); margin-bottom:14px;
+        border-radius: 18px; padding: 18px 22px; background: linear-gradient(135deg, #ffffff, #f3f7ff);
+        border: 1px solid var(--border); box-shadow: 0 12px 30px rgba(16,24,40,0.08); margin-bottom: 14px;
       }
-      .topbar h1{ margin:0; font-size:26px; letter-spacing:.2px; color:var(--text);}
-      .topbar p{ margin:8px 0 0; color:var(--muted); }
+      .topbar h1{ margin:0; font-size: 26px; letter-spacing:.2px; color: var(--text);}
+      .topbar p{ margin:8px 0 0; color: var(--muted); }
+
       .section{
-        background:var(--card); border-radius:var(--radius); border:1px solid var(--border);
-        padding:14px 16px; margin:10px 0 18px; box-shadow:0 8px 20px rgba(16,24,40,.06);
+        background: var(--card); border-radius: var(--radius); border: 1px solid var(--border);
+        padding: 14px 16px; margin: 10px 0 18px; box-shadow: 0 8px 20px rgba(16,24,40,0.06);
       }
-      .section h3{ margin:4px 0 12px; color:var(--text); }
-      .stDataFrame{
-        background: var(--card) !important; border-radius: var(--radius) !important; border: 1px solid var(--border) !important;
-        box-shadow: 0 10px 24px rgba(16, 24, 40, .06) !important; overflow: hidden !important;
-      }
+      .section h3{ margin: 4px 0 12px; color: var(--text); }
 
       /* KPI */
       .kpi-grid{ display:grid; grid-template-columns: repeat(5, minmax(140px,1fr)); gap:12px; }
-      .kpi{ background:#fff; border-radius:14px; padding:14px; border:1px solid var(--border); box-shadow:0 8px 20px rgba(16,24,40,.06); }
-      .kpi .label{ color:var(--muted); font-size:13px; }
-      .kpi .value{ font-size:22px; font-weight:800; margin-top:6px; letter-spacing:.2px; color:var(--text); }
-      .kpi.ok{border-color:rgba(34,197,94,.45)} .kpi.warn{border-color:rgba(217,119,6,.35)} .kpi.dng{border-color:rgba(220,38,38,.40)}
+      .kpi{ background:#fff; border-radius:14px; padding:14px; border:1px solid var(--border); box-shadow:0 8px 20px rgba(16,24,40,0.06);}
+      .kpi .label{ color:#5b6b82; font-size:13px;}
+      .kpi .value{ font-size:22px; font-weight:800; margin-top:6px; letter-spacing:.2px; color:#1a1f36;}
+      .kpi.ok{ border-color: rgba(34,197,94,.45);} .kpi.warn{ border-color: rgba(217,119,6,.35);} .kpi.dng{ border-color: rgba(220,38,38,.40);}
 
-      /* Pills */
-      .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); color:var(--text); background:#fff; }
+      /* Badge */
+      .pill{ display:inline-block; padding:4px 10px; border-radius:999px; font-size:12px; border:1px solid var(--border); color: var(--text); background:#fff; }
       .pill.blue{border-color:#bfdbfe; background:#eff6ff;} .pill.green{border-color:#bbf7d0; background:#ecfdf5;}
       .pill.orange{border-color:#fed7aa; background:#fff7ed;} .pill.red{border-color:#fecaca; background:#fef2f2;}
-      .muted{ color: var(--muted); font-size: 14px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -121,11 +118,9 @@ inject_pro_ui()
 ui_topbar("CRM MEGA FORMATION — إدارة العملاء", "إدارة العملاء • المداخيل والمصاريف • نوط داخلية")
 
 # 🔎 بحث عام (placeholder)
-top_col1, top_col2 = st.columns([3,1])
+top_col1, _ = st.columns([3,1])
 with top_col1:
     global_q = st.text_input("ابحث سريعًا...", placeholder="اكتب اسم / هاتف (216XXXXXXXX أو 8 أرقام) / تكوين ...")
-with top_col2:
-    st.caption("")
 
 # ---------------- Google Sheets Auth ----------------
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -140,7 +135,7 @@ def make_client_and_sheet_id():
     except Exception:
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
         client = gspread.authorize(creds)
-        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها بمالك
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّل بالـ ID متاعك
         return client, sheet_id
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
@@ -205,6 +200,8 @@ def play_sound_mp3(path="notification.mp3"):
 
 def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bool=False):
     ui_section("📝 النوط الداخلية", "📝")
+
+    # ✍️ إضافة ملاحظة جديدة (إرسال لموظف آخر)
     with st.expander("✍️ إرسال نوط لموظف آخر", expanded=True):
         col1, col2 = st.columns([1,2])
         with col1:
@@ -212,17 +209,20 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
             receiver = st.selectbox("الموظّف المستلم", receivers)
         with col2:
             message = st.text_area("الملاحظة", placeholder="اكتب ملاحظة قصيرة...")
+
         if st.button("إرسال ✅", use_container_width=True):
             ok, info = inter_notes_append(current_employee, receiver, message)
             st.success("تم الإرسال 👌") if ok else st.error(f"تعذّر الإرسال: {info}")
 
+    # تنبيه أوتوماتيكي
     _autorefresh = getattr(st, "autorefresh", None) or getattr(st, "experimental_autorefresh", None)
     if callable(_autorefresh): _autorefresh(interval=10_000, key="inter_notes_poll")
 
     if "prev_unread_count" not in st.session_state: st.session_state.prev_unread_count = 0
     unread_df = inter_notes_fetch_unread(current_employee); unread_count = len(unread_df)
     try:
-        if unread_count > st.session_state.prev_unread_count: st.toast("📩 نوط جديدة وصْلتك!", icon="✉️"); play_sound_mp3()
+        if unread_count > st.session_state.prev_unread_count:
+            st.toast("📩 نوط جديدة وصْلتك!", icon="✉️"); play_sound_mp3()
     finally:
         st.session_state.prev_unread_count = unread_count
 
@@ -266,7 +266,7 @@ def inter_notes_ui(current_employee: str, all_employees: list[str], is_admin: bo
                 try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
                 except: return x
             df_all_notes["وقت"] = df_all_notes["timestamp"].apply(_fmt_ts2)
-            st.dataframe(df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", ascending=False),
+            st.dataframe(df_all_notes[["وقت","sender","receiver","message","status","note_id"]].sort_values("وقت", descending=False),
                          use_container_width=True, height=320)
     ui_section_end()
 
@@ -275,9 +275,6 @@ EXPECTED_HEADERS = ["Nom & Prénom","Téléphone","Type de contact","Formation",
 FIN_REV_COLUMNS = ["Date","Libellé","Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Echeance","Reste","Mode","Employé","Catégorie","Note"]
 FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
 FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
-
-TRANSFER_LOG_SHEET = "_TransferLog"
-TRANSFER_LOG_HEADERS = ["ts","from","to","client_name","phone","done_by"]
 
 def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return df
@@ -296,35 +293,58 @@ def fin_month_title(mois: str, kind: str, branch: str):
     short = "MB" if "Menzel" in branch else "BZ"
     return f"{prefix}{mois} ({short})"
 
-def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str]):
+# ===== FIX: لا تنشئ ورقة أثناء التجميع الشهري + تحكّم في الإنشاء =====
+def fin_ensure_ws(client, sheet_id: str, title: str, columns: list[str], create_if_missing: bool = True):
+    """يرجّع worksheet أو None إذا مش موجود و create_if_missing=False"""
     sh = client.open_by_key(sheet_id)
     try:
         ws = sh.worksheet(title)
-    except Exception:
+    except gspread.WorksheetNotFound:
+        if not create_if_missing:
+            return None
         ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
-        ws.update("1:1", [columns]); return ws
-    rows = ws.get_all_values()
-    if not rows: ws.update("1:1", [columns])
+        try:
+            ws.update("1:1", [columns])
+        except gspread.exceptions.APIError:
+            pass
+        return ws
+
+    try:
+        rows = ws.get_all_values()
+    except gspread.exceptions.APIError:
+        return ws
+
+    if not rows:
+        try: ws.update("1:1", [columns])
+        except gspread.exceptions.APIError: pass
     else:
         header = rows[0]
-        if not header or header[:len(columns)] != columns: ws.update("1:1", [columns])
+        if not header or header[:len(columns)] != columns:
+            try: ws.update("1:1", [columns])
+            except gspread.exceptions.APIError: pass
     return ws
 
 def _to_num_series(s):
-    return (s.astype(str)
-              .str.replace(" ", "", regex=False)
-              .str.replace(",", ".", regex=False)
-              .pipe(pd.to_numeric, errors="coerce")
-              .fillna(0.0))
+    return s.astype(str).str.replace(" ", "", regex=False).str.replace(",", ".", regex=False).pipe(pd.to_numeric, errors="coerce").fillna(0.0)
 
-def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
+def fin_read_df(client, sheet_id: str, title: str, kind: str, create_if_missing: bool = True) -> pd.DataFrame:
     cols = FIN_REV_COLUMNS if kind == "Revenus" else FIN_DEP_COLUMNS
-    ws = fin_ensure_ws(client, sheet_id, title, cols)
-    values = ws.get_all_values()
-    if not values: return pd.DataFrame(columns=cols)
+    ws = fin_ensure_ws(client, sheet_id, title, cols, create_if_missing=create_if_missing)
+    if ws is None:
+        return pd.DataFrame(columns=cols)
+    try:
+        values = ws.get_all_values()
+    except gspread.exceptions.APIError:
+        return pd.DataFrame(columns=cols)
+    if not values:
+        return pd.DataFrame(columns=cols)
+
     df = pd.DataFrame(values[1:], columns=values[0])
+
     if "Date" in df.columns: df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
-    if kind == "Revenus" and "Echeance" in df.columns: df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
+    if kind == "Revenus" and "Echeance" in df.columns:
+        df["Echeance"] = pd.to_datetime(df["Echeance"], errors="coerce", dayfirst=True)
+
     if kind == "Revenus":
         for c in ["Prix","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste"]:
             if c in df.columns: df[c] = _to_num_series(df[c])
@@ -341,7 +361,7 @@ def fin_read_df(client, sheet_id: str, title: str, kind: str) -> pd.DataFrame:
 
 def fin_append_row(client, sheet_id: str, title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
-    ws = fin_ensure_ws(client, sheet_id, title, cols)
+    ws = fin_ensure_ws(client, sheet_id, title, cols, create_if_missing=True)
     header = ws.row_values(1)
     ws.append_row([str(row.get(col, "")) for col in header])
 
@@ -360,11 +380,13 @@ def format_display_phone(s: str) -> str:
 def color_tag(val):
     if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7: return f"background-color: {val}; color: white;"
     return ""
+
 def mark_alert_cell(val: str):
     s = str(val).strip()
     if not s: return ''
     if "متأخر" in s: return 'background-color: #fff3cd; color: #7a4e00'
     return 'background-color: #ffe5e5; color: #7a0000'
+
 def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription", "")).strip().lower()
     return ['background-color: #ecfdf5' if insc in ("inscrit","oui") else '' for _ in row.index]
@@ -403,12 +425,12 @@ def load_all_data():
         if title.endswith("_PAIEMENTS"): continue
         if title.startswith("_"): continue
         if title.startswith("Revenue ") or title.startswith("Dépense "): continue
-        if title == INTER_NOTES_SHEET: continue
+        if title in (INTER_NOTES_SHEET, "TransferLog"): continue
         all_employes.append(title)
         rows = ws.get_all_values()
-        if not rows: ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
-        try: ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
-        except Exception: pass
+        if not rows:
+            try: ws.update("1:1", [EXPECTED_HEADERS]); rows = ws.get_all_values()
+            except Exception: pass
         data_rows = rows[1:] if len(rows) > 1 else []
         fixed_rows = []
         for r in data_rows:
@@ -421,6 +443,32 @@ def load_all_data():
     return big, all_employes
 
 df_all, all_employes = load_all_data()
+
+# ---------------- Transfer Log (من نقل/إلى/منفّذ) ----------------
+TRANSFER_SHEET = "TransferLog"
+TRANSFER_HEADERS = ["timestamp","from_emp","to_emp","client_name","phone","performed_by"]
+
+def transfer_ws():
+    sh = client.open_by_key(SPREADSHEET_ID)
+    try:
+        ws = sh.worksheet(TRANSFER_SHEET)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=TRANSFER_SHEET, rows="1000", cols=str(len(TRANSFER_HEADERS)))
+        ws.update("1:1", [TRANSFER_HEADERS])
+    return ws
+
+def log_transfer(from_emp, to_emp, client_name, phone, performed_by):
+    ws = transfer_ws()
+    ts = datetime.now(timezone.utc).isoformat()
+    ws.append_row([ts, from_emp, to_emp, client_name, phone, performed_by])
+
+@st.cache_data(ttl=300)
+def fetch_transfer_log() -> pd.DataFrame:
+    ws = transfer_ws()
+    values = ws.get_all_values()
+    if not values or len(values) <= 1: return pd.DataFrame(columns=TRANSFER_HEADERS)
+    df = pd.DataFrame(values[1:], columns=values[0])
+    return df
 
 # ---------------- Sidebar ----------------
 try: st.sidebar.image(Image.open("logo.png"), use_container_width=True)
@@ -447,33 +495,31 @@ def admin_lock_ui():
                 else: st.error("كلمة سرّ غير صحيحة.")
 if role == "أدمن": admin_lock_ui()
 
-# ---------------- Helpers: Collect monthly totals (for Admin) ----------------
+# ---------------- Finance Tab ----------------
 @st.cache_data(ttl=300)
 def collect_monthly_finance():
-    """يرجع DataFrame لكل الأشهر (الفرعين)، يحتوي:
-       mois, branch, revenus_AS, depenses, reste, prix_total (مبلغ المسجّلين)"""
-    sh = client.open_by_key(SPREADSHEET_ID)
+    """DF لكل الأشهر (الفرعين) بدون إنشاء أوراق ناقصة."""
     months = FIN_MONTHS_FR
     rows = []
     for branch in ["Menzel Bourguiba", "Bizerte"]:
         for mois in months:
-            rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
-            dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+            rev = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus", create_if_missing=False)
+            dep = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses", create_if_missing=False)
             revenus_AS = float(rev["Montant_Total"].sum()) if "Montant_Total" in rev.columns else 0.0
-            depenses    = float(dep["Montant"].sum()) if "Montant" in dep.columns else 0.0
-            reste       = float(rev["Reste"].sum()) if "Reste" in rev.columns else 0.0
-            prix_total  = float(rev["Prix"].sum()) if "Prix" in rev.columns else 0.0  # نعتبره مبلغ المسجّلين
-            rows.append({"mois": mois, "branch": branch, "Total_AplusS": revenus_AS, "Total_Dep": depenses, "Total_Reste": reste, "Montant_Inscrits": prix_total})
+            depenses    = float(dep["Montant"].sum())      if "Montant" in dep.columns else 0.0
+            reste       = float(rev["Reste"].sum())        if "Reste" in rev.columns else 0.0
+            prix_total  = float(rev["Prix"].sum())         if "Prix" in rev.columns else 0.0
+            rows.append({
+                "mois": mois, "branch": branch,
+                "Total_AplusS": revenus_AS,
+                "Total_Dep": depenses,
+                "Total_Reste": reste,
+                "Montant_Inscrits": prix_total
+            })
     df = pd.DataFrame(rows)
-    # ترتيب الأشهر حسب تقويم السنة
-    cat = pd.Categorical(df["mois"], categories=FIN_MONTHS_FR, ordered=True)
-    df["mois"] = cat
-    return df.sort_values(["mois","branch"])
+    df["mois"] = pd.Categorical(df["mois"], categories=FIN_MONTHS_FR, ordered=True)
+    return df.sort_values(["mois", "branch"])
 
-def month_name_fr(dt: date) -> str:
-    return FIN_MONTHS_FR[dt.month-1]
-
-# ---------------- "مداخيل (MB/Bizerte)" Tab ----------------
 if tab_choice == "مداخيل (MB/Bizerte)":
     ui_section("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)", "💸")
     with st.sidebar:
@@ -519,40 +565,129 @@ if tab_choice == "مداخيل (MB/Bizerte)":
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
     ui_section_end()
 
-    # === Admin-only monthly rollup (لا نحذف شيء، هذا إضافة) ===
+    # 📅 ملخّص شهري — يظهر للأدمن فقط
     if role == "أدمن" and admin_unlocked():
-        ui_section("📅 ملخّص شهري (Admin فقط)", "📅")
+        ui_section("📅 ملخّص شهري (A+S / مصاريف / Reste / مبلغ المسجّلين)", "📅")
         monthly = collect_monthly_finance()
-        # KPI للشهر الحالي واللي قبلو (مجمع الفرعين)
-        curr_m = month_name_fr(date.today())
-        prev_m = FIN_MONTHS_FR[(date.today().month-2) % 12]
-        curRow = monthly[monthly["mois"]==curr_m].groupby("mois").sum(numeric_only=True)
-        prevRow= monthly[monthly["mois"]==prev_m].groupby("mois").sum(numeric_only=True)
-
-        def row_or_zero(df, col):
-            try: return float(df[col].iloc[0])
-            except: return 0.0
-
-        cur_AplusS = row_or_zero(curRow, "Total_AplusS")
-        cur_Dep    = row_or_zero(curRow, "Total_Dep")
-        cur_Reste  = row_or_zero(curRow, "Total_Reste")
-        cur_Inscr  = row_or_zero(curRow, "Montant_Inscrits")
-
-        ui_kpis([
-            {"label":f"({curr_m}) Total A+S (مداخيل)","value":f"{cur_AplusS:,.2f}","tone":"ok"},
-            {"label":f"({curr_m}) Total مصاريف","value":f"{cur_Dep:,.2f}","tone":"warn"},
-            {"label":f"({curr_m}) إجمالي Reste","value":f"{cur_Reste:,.2f}","tone":"orange"},
-            {"label":f"({curr_m}) مبلغ المسجّلين (Prix)","value":f"{cur_Inscr:,.2f}","tone":"blue"},
-        ])
-
-        st.markdown("#### 📊 جدول التجميع الشهري (الفرعين)")
-        tbl = (monthly
-               .groupby("mois", sort=True, observed=True)
-               .sum(numeric_only=True)
-               .reset_index()
-               .rename(columns={"mois":"الشهر","Total_AplusS":"A+S (مداخيل)","Total_Dep":"مصاريف","Total_Reste":"Reste","Montant_Inscrits":"مبلغ المسجّلين (Prix)"}))
-        st.dataframe(tbl, use_container_width=True, height=320)
+        st.dataframe(monthly, use_container_width=True, height=320)
         ui_section_end()
+
+        # KPIs للفرع/الشهر الحالي
+        rev_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Revenus", branch), "Revenus")
+        dep_df = fin_read_df(client, SPREADSHEET_ID, fin_month_title(mois, "Dépenses", branch), "Dépenses")
+        sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
+        sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
+        sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
+        if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
+            dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin", "Montant"].sum()
+            dep_struct = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure", "Montant"].sum()
+            dep_inscr  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Inscription", "Montant"].sum()
+        else: dep_admin = dep_struct = dep_inscr = 0.0
+        reste_admin  = float(sum_admin)  - float(dep_admin)
+        reste_struct = float(sum_struct) - float(dep_struct)
+        reste_inscr  = float(sum_preins) - float(dep_inscr)
+
+        ui_section("ملخّص الفرع للشهر — Admin", "🧮")
+        ui_kpis([
+            {"label":"مداخيل Admin","value": f"{sum_admin:,.2f}","tone":"ok"},
+            {"label":"مصاريف Admin","value": f"{dep_admin:,.2f}","tone":"warn"},
+            {"label":"Reste Admin","value": f"{reste_admin:,.2f}","tone":"ok" if reste_admin>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"مداخيل Structure","value": f"{sum_struct:,.2f}","tone":"ok"},
+            {"label":"مصاريف Structure","value": f"{dep_struct:,.2f}","tone":"warn"},
+            {"label":"Reste Structure","value": f"{reste_struct:,.2f}","tone":"ok" if reste_struct>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"مداخيل Inscription","value": f"{sum_preins:,.2f}","tone":"ok"},
+            {"label":"مصاريف Inscription","value": f"{dep_inscr:,.2f}","tone":"warn"},
+            {"label":"Reste Inscription","value": f"{reste_inscr:,.2f}","tone":"ok" if reste_inscr>=0 else "dng"},
+        ])
+        ui_kpis([
+            {"label":"Total A+S (مداخيل)","value": f"{sum_total_as:,.2f}","tone":"blue"},
+            {"label":"Total مصاريف","value": f"{(dep_admin+dep_struct+dep_inscr):,.2f}","tone":"warn"},
+            {"label":"إجمالي Reste بالدروس","value": f"{sum_reste_due:,.2f}","tone":"orange"},
+        ])
+        ui_section_end()
+
+    st.markdown("---"); ui_section("➕ إضافة عملية جديدة", "➕")
+    selected_client_info = None; client_default_lib = ""; emp_default = (employee or "")
+    if kind == "Revenus":
+        st.markdown("#### 👤 اربط الدفعة بعميل مُسجَّل (اختياري)")
+        reg_df = df_all.copy(); reg_df["Inscription_norm"] = reg_df["Inscription"].fillna("").astype(str).str.strip().str.lower()
+        reg_df = reg_df[reg_df["Inscription_norm"].isin(["oui","inscrit"])]
+        if role == "موظف" and employee: reg_df = reg_df[reg_df["__sheet_name"] == employee]
+        if not reg_df.empty:
+            def _opt(row): return f"{row.get('Nom & Prénom','')} — {format_display_phone(row.get('Téléphone',''))} — {row.get('Formation','')}  [{row.get('__sheet_name','')}]"
+            options = [_opt(r) for _, r in reg_df.iterrows()]
+            pick = st.selectbox("اختر عميلًا مُسجَّلًا", ["— بدون اختيار —"] + options, key="fin_client_pick")
+            if pick and pick != "— بدون اختيار —":
+                idx = options.index(pick); row = reg_df.iloc[idx]
+                selected_client_info = {"name":str(row.get("Nom & Prénom","")).strip(),"tel":str(row.get("Téléphone","")).strip(),"formation":str(row.get("Formation","")).strip(),"emp":str(row.get("__sheet_name","")).strip()}
+                client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
+                if not emp_default: emp_default = selected_client_info["emp"]
+
+    with st.form("fin_add_row"):
+        d1, d2, d3 = st.columns(3)
+        date_val = d1.date_input("Date", value=datetime.today())
+        libelle  = d2.text_input("Libellé", value=(client_default_lib if kind=="Revenus" else ""))
+        employe  = d3.selectbox("Employé", all_employes if all_employes else [""], index=(all_employes.index(emp_default) if (emp_default in all_employes) else 0) if all_employes else 0)
+
+        if kind == "Revenus":
+            r1, r2, r3 = st.columns(3)
+            prix = r1.number_input("💰 Prix (سعر التكوين)", min_value=0.0, step=10.0)
+            montant_admin  = r2.number_input("🏢 Montant Admin", min_value=0.0, step=10.0)
+            montant_struct = r3.number_input("🏫 Montant Structure", min_value=0.0, step=10.0)
+            r4, r5 = st.columns(2)
+            montant_preins = r4.number_input("📝 Montant Pré-Inscription", min_value=0.0, step=10.0, help="اختياري")
+            montant_total  = float(montant_admin) + float(montant_struct)
+            e1, e2, e3 = st.columns(3)
+            echeance = e1.date_input("⏰ تاريخ الاستحقاق", value=date.today())
+            mode     = e2.selectbox("Mode", ["Espèces","Virement","Carte","Chèque","Autre"])
+            categorie= e3.text_input("Catégorie", value="Revenus")
+            note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
+            note = st.text_area("Note", value=note_default)
+            rev_df_current = fin_read_df(client, SPREADSHEET_ID, fin_title, "Revenus")
+            paid_so_far = 0.0
+            if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
+                same = rev_df_current[rev_df_current["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()]
+                paid_so_far = float(same["Montant_Total"].sum()) if not same.empty else 0.0
+            reste_calc = max(float(prix) - (paid_so_far + float(montant_total)), 0.0)
+            reste_input = st.number_input("💳 الباقي للدفع (Reste)", min_value=0.0, value=float(round(reste_calc,2)), step=10.0, help="يتحسب آليًا، وتنجم تبدّلو يدويًا")
+            st.caption(f"💡 Total (Admin+Structure): {montant_total:.2f} — مدفوع سابقًا لنفس Libellé: {paid_so_far:.2f} — Reste المقترح: {reste_calc:.2f} — Pré-Inscription منفصل: {montant_preins:.2f}")
+            if st.form_submit_button("✅ حفظ العملية"):
+                if not libelle.strip(): st.error("Libellé مطلوب.")
+                elif prix <= 0: st.error("Prix مطلوب.")
+                elif montant_total <= 0 and montant_preins <= 0: st.error("المبلغ لازم > 0 (Admin/Structure أو Pré-Inscription).")
+                else:
+                    fin_append_row(client, SPREADSHEET_ID, fin_title, {
+                        "Date": fmt_date(date_val), "Libellé": libelle.strip(), "Prix": f"{float(prix):.2f}",
+                        "Montant_Admin": f"{float(montant_admin):.2f}", "Montant_Structure": f"{float(montant_struct):.2f}",
+                        "Montant_PreInscription": f"{float(montant_preins):.2f}", "Montant_Total": f"{float(montant_total):.2f}",
+                        "Echeance": fmt_date(echeance), "Reste": f"{float(reste_input):.2f}", "Mode": mode,
+                        "Employé": employe.strip(), "Catégorie": categorie.strip(), "Note": note.strip(),
+                    }, "Revenus")
+                    st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
+        else:
+            r1, r2, r3 = st.columns(3)
+            montant = r1.number_input("Montant", min_value=0.0, step=10.0)
+            caisse  = r2.selectbox("Caisse_Source", ["Caisse_Admin","Caisse_Structure","Caisse_Inscription"])
+            mode    = r3.selectbox("Mode", ["Espèces","Virement","Carte","Chèque","Autre"])
+            c2, c3 = st.columns(2)
+            categorie = c2.text_input("Catégorie", value="Achat")
+            note      = c3.text_area("Note (اختياري)")
+            if st.form_submit_button("✅ حفظ العملية"):
+                if not libelle.strip(): st.error("Libellé مطلوب.")
+                elif montant <= 0: st.error("المبلغ لازم > 0.")
+                else:
+                    fin_append_row(client, SPREADSHEET_ID, fin_title, {
+                        "Date": fmt_date(date_val), "Libellé": libelle.strip(), "Montant": f"{float(montant):.2f}",
+                        "Caisse_Source": caisse, "Mode": mode, "Employé": employe.strip(), "Catégorie": categorie.strip(), "Note": note.strip(),
+                    }, "Dépenses")
+                    st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
+    ui_section_end()
 
 # ---------------- CRM: مشتقّات وعرض ----------------
 df_all = df_all.copy()
@@ -571,9 +706,9 @@ if not df_all.empty:
     ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
     df_all["Inscription_norm"] = df_all["Inscription"].fillna("").astype(str).str.strip().str.lower()
     inscrit_mask = df_all["Inscription_norm"].isin(["oui","inscrit"])
-    # ملاحظة: ما عادش نعتبر المسجّلين "مضافين بلا ملاحظات" — فقط نعرضهم عادي
+    df_all.loc[inscrit_mask, "Date de suivi"] = ""; df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
-    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Télé폰_norm"] = ""; ALL_PHONES = set()
+    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
 
 # ---------------- Dashboard KPIs ----------------
 ui_section("لوحة الإحصائيات السريعة", "📈")
@@ -644,27 +779,6 @@ if global_phone.strip():
         st.dataframe(styled_global, use_container_width=True)
 st.markdown("---"); ui_section_end()
 
-# ---------------- Helper: Transfer Log Sheet ----------------
-def ensure_transfer_log_ws():
-    sh = client.open_by_key(SPREADSHEET_ID)
-    try:
-        ws = sh.worksheet(TRANSFER_LOG_SHEET)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=TRANSFER_LOG_SHEET, rows="1000", cols="12")
-        ws.update("1:1", [TRANSFER_LOG_HEADERS])
-    return ws
-
-def append_transfer_log(src_emp, dst_emp, name, phone, done_by):
-    ws = ensure_transfer_log_ws()
-    ts = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S")
-    ws.append_row([ts, src_emp, dst_emp, name, phone, done_by])
-
-def read_transfer_log_df():
-    ws = ensure_transfer_log_ws()
-    vals = ws.get_all_values()
-    if not vals or len(vals)<=1: return pd.DataFrame(columns=TRANSFER_LOG_HEADERS)
-    return pd.DataFrame(vals[1:], columns=vals[0])
-
 # ---------------- Employee area ----------------
 if role == "موظف" and employee:
     _emp_lock_ui(employee)
@@ -695,9 +809,9 @@ if role == "موظف" and employee:
         ui_section_end()
 
     if not filtered_df.empty:
-        # لا نحسب المسجّلين كمضافين بلا ملاحظات — نعرض عدّاد عام فقط
+        # ملاحظة: لا نحسب "المسجّلين كأنهم بلا ملاحظات" بعد الآن — نعرض فقط عدّاد من بلا Remarque
         pending_mask = filtered_df["Remarque"].fillna("").astype(str).str.strip() == ""
-        ui_badge(f"⏳ مضافين بلا ملاحظات (بدون استثناء المسجّلين): {int(pending_mask.sum())}", "orange")
+        ui_badge(f"⏳ مضافين بلا ملاحظات: {int(pending_mask.sum())}", "orange")
         formations = sorted([f for f in filtered_df["Formation"].dropna().astype(str).unique() if f.strip()])
         formation_choice = st.selectbox("📚 فلترة بالتكوين", ["الكل"] + formations)
         if formation_choice != "الكل":
@@ -732,7 +846,7 @@ if role == "موظف" and employee:
             name_key=f"edit_name_txt::{chosen_phone}"; phone_key=f"edit_phone_txt::{chosen_phone}"
             form_key=f"edit_formation_txt::{chosen_phone}"; ajout_key=f"edit_ajout_dt::{chosen_phone}"
             suivi_key=f"edit_suivi_dt::{chosen_phone}"; insc_key=f"edit_insc_sel::{chosen_phone}"
-            remark_key=f"edit_remark_txt::{chosen_phone}"; note_key=f"append_note_txt::{chosen_phone}"
+            remark_key=f"edit_remark_txt::{chosen_phone}"
 
             col1, col2 = st.columns(2)
             with col1:
@@ -745,7 +859,6 @@ if role == "موظف" and employee:
                 new_insc = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key=insc_key)
 
             new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
-            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
 
             def find_row_by_phone(ws, phone_digits: str) -> int | None:
                 values = ws.get_all_values()
@@ -775,46 +888,18 @@ if role == "موظف" and employee:
                         ws.update_cell(row_idx, col_map["Date ajout"], fmt_date(new_ajout))
                         ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
                         ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
-                        if new_remark_full.strip() != cur_remark.strip(): ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
-                        if extra_note.strip():
-                            old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
-                            stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                            appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
-                            ws.update_cell(row_idx, col_map["Remarque"], appended)
+                        if new_remark_full.strip() != cur_remark.strip():
+                            ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
                         st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء التعديل: {e}")
         ui_section_end()
 
-    # 📝 ملاحظة سريعة (رجّعتها بناءً على طلبك «ما ننحي شي»)
+    # 🎨 Tag
     if not df_emp.empty:
-        ui_section("📝 أضف ملاحظة (سريعة)", "📝")
+        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
         scope_df = (filtered_df if not filtered_df.empty else df_emp).copy()
         scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
-        tel_to_update_key = st.selectbox("اختر العميل",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
-            key="note_quick_pick")
-        tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1])
-        new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
-        if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
-            try:
-                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee); values = ws.get_all_values(); header = values[0] if values else []
-                if "Téléphone" in header:
-                    tel_idx = header.index("Téléphone"); row_idx = None
-                    for i, r in enumerate(values[1:], start=2):
-                        if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update: row_idx = i; break
-                    if not row_idx: st.error("❌ الهاتف غير موجود.")
-                    else:
-                        rem_col = EXPECTED_HEADERS.index("Remarque") + 1
-                        old_remark = ws.cell(row_idx, rem_col).value or ""
-                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                        updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
-                        ws.update_cell(row_idx, rem_col, updated)
-                        st.success("✅ تمت إضافة الملاحظة"); st.cache_data.clear()
-            except Exception as e: st.error(f"❌ خطأ: {e}")
-        ui_section_end()
-
-        ui_section("🎨 اختر لون/Tag للعميل", "🎨")
         tel_color_key = st.selectbox("اختر العميل",
             [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
             key="tag_select")
@@ -858,7 +943,7 @@ if role == "موظف" and employee:
             except Exception as e: st.error(f"❌ خطأ أثناء الإضافة: {e}")
     ui_section_end()
 
-    # 🔁 نقل + WhatsApp (مع لوج الموظّف اللي عمل النقل)
+    # 🔁 نقل + WhatsApp
     ui_section("🔁 نقل عميل بين الموظفين", "🔁")
     if all_employes:
         colRA, colRB = st.columns(2)
@@ -869,6 +954,7 @@ if role == "موظف" and employee:
         else:
             pick = st.selectbox("اختر العميل للنقل", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()], key="reassign_pick")
             phone_pick = normalize_tn_phone(pick.split("—")[-1])
+            client_name_for_log = pick.split(" — ")[0] if " — " in pick else pick.split("—")[0]
             if st.button("🚚 نقل الآن"):
                 try:
                     sh = client.open_by_key(SPREADSHEET_ID); ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
@@ -883,11 +969,11 @@ if role == "موظف" and employee:
                         if len(row_values) < len(EXPECTED_HEADERS): row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
                         row_values = row_values[:len(EXPECTED_HEADERS)]
                         row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                        client_name = row_values[EXPECTED_HEADERS.index("Nom & Prénom")]
-                        client_phone = row_values[EXPECTED_HEADERS.index("Téléphone")]
                         ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
-                        append_transfer_log(src_emp, dst_emp, client_name, client_phone, employee or "Admin/Unknown")
-                        st.success(f"✅ نقل ({client_name}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
+                        # نسجّل اللوج
+                        performed_by = (employee if role=="موظف" and employee else "Admin")
+                        log_transfer(src_emp, dst_emp, row_values[0], normalize_tn_phone(row_values[1]), performed_by)
+                        st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ أثناء النقل: {e}")
     ui_section_end()
 
@@ -961,23 +1047,20 @@ if role == "أدمن":
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ: {e}")
 
-        st.markdown("---")
-        # عرض لوج نقل العملاء للأدمن
-        st.subheader("📚 سجلّ نقل العملاء (Transfer Log)")
-        log_df = read_transfer_log_df()
-        if log_df.empty:
-            st.caption("لا توجد عمليات نقل مسجّلة بعد.")
+        # 👀 جدول: من قام بنقل العملاء
+        st.divider()
+        st.subheader("📜 عمليات نقل العملاء (Log)")
+        tr = fetch_transfer_log()
+        if tr.empty:
+            st.caption("لا توجد عمليات نقل مسجلة لحدّ الآن.")
         else:
-            st.dataframe(log_df.sort_values("ts", ascending=False), use_container_width=True, height=300)
-
-        # جدول تجميع شهري واضح لمبالغ المسجّلين (Prix) + A+S + مصاريف + Reste
-        st.markdown("### 📅 تجميع شهري — المبالغ حسب الأشهر (مجمع الفرعين)")
-        monthly = collect_monthly_finance()
-        roll = (monthly.groupby("mois", observed=True)
-                .sum(numeric_only=True)
-                .reset_index()
-                .rename(columns={"mois":"الشهر","Total_AplusS":"A+S (مداخيل)","Total_Dep":"مصاريف","Total_Reste":"Reste","Montant_Inscrits":"مبلغ المسجّلين (Prix)"}))
-        st.dataframe(roll, use_container_width=True, height=320)
+            def _fmt(x):
+                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except: return x
+            tr = tr.copy()
+            tr["وقت"] = tr["timestamp"].apply(_fmt)
+            tr_disp = tr[["وقت","from_emp","to_emp","client_name","phone","performed_by"]].sort_values("وقت", ascending=False)
+            st.dataframe(tr_disp, use_container_width=True, height=260)
 
         st.caption("صفحة الأدمِن مفتوحة لمدّة 30 دقيقة من وقت الفتح.")
     ui_section_end()
