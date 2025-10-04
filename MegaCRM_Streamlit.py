@@ -1,10 +1,9 @@
-# MegaCRM_Streamlit_App.py — CRM + Finance (MB/Bizerte) + InterNotes + Reassign Log + Payouts
+# MegaCRM_Streamlit_App.py — CRM + Finance (MB/Bizerte) + InterNotes + Reassign Log + Payouts + Monthly Stats + Payment Edit
 # =================================================================================================
-# - CRM كامل + قفل موظفين + بحث + تعديل + نقل + واتساب
-# - InterNotes: نوط داخلية
-# - Finance: Revenus/Dépenses (MB/Bizerte) + تلخيص شهري
-# - Reassign_Log: تسجيل "شكون حرّك العميل" + عرضها للأدمِن
-# - 🆕 Payouts: تبويبة خلاص الإدارة/المكوّنين (كيما المصاريف، وتختار منين يتنحى المبلغ)
+# إضافات جديدة:
+# - 📅 إحصائيات شهرية (اختيار شهر والاطلاع على الأداء العام + حسب الموظّف + حسب التكوين)
+# - ✏️ تعديل/تكملة دفعة موجودة: بحث على جميع الأشهر لنفس Libellé وتعديل نفس الصف داخل ورقة الشهر
+# - Payouts تبقى كما هي، و Reassign_Log يسجّل "شكون حرّك" العميل
 
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
@@ -444,6 +443,44 @@ def payouts_append_row(title: str, row: dict):
     ws.append_row(vals)
 
 # ======================================================================
+#      🆕 Revenus helpers لقراءة/تجميع دفعات نفس Libellé عبر كل الأشهر
+# ======================================================================
+def find_revenus_across_months_for_libelle(branch: str, libelle: str) -> pd.DataFrame:
+    """يرجع كل الأسطر (Revenus) في السنة الحالية لنفس Libellé عبر جميع الأشهر للفرع."""
+    out = []
+    for m in FIN_MONTHS_FR:
+        title = fin_month_title(m, "Revenus", branch)
+        try:
+            df = fin_read_df(title, "Revenus")
+        except Exception:
+            df = pd.DataFrame(columns=FIN_REV_COLUMNS)
+        if not df.empty and "Libellé" in df.columns:
+            sub = df[df["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()].copy()
+            if not sub.empty:
+                sub["__sheet_title"] = title
+                sub["__mois"] = m
+                out.append(sub)
+    if out:
+        return pd.concat(out, ignore_index=True)
+    return pd.DataFrame(columns=FIN_REV_COLUMNS + ["__sheet_title","__mois"])
+
+def find_revenus_row_index(ws, libelle: str, date_str: str) -> int | None:
+    """نلقى رقم الصف عبر مطابقة Libellé + Date (مكتوبة dd/mm/YYYY)"""
+    rows = ws.get_all_values()
+    if not rows: return None
+    header = rows[0]
+    try:
+        idx_lib = header.index("Libellé")
+        idx_dt  = header.index("Date")
+    except ValueError:
+        return None
+    for i, r in enumerate(rows[1:], start=2):
+        if len(r) > max(idx_lib, idx_dt):
+            if r[idx_lib].strip().lower() == libelle.strip().lower() and r[idx_dt].strip() == date_str.strip():
+                return i
+    return None
+
+# ======================================================================
 #                                   CRM مشتقّات + لوحة
 # ======================================================================
 df_all = df_all.copy()
@@ -468,6 +505,7 @@ if not df_all.empty:
 else:
     df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES = set()
 
+# ---------------- Dashboard سريع ----------------
 st.subheader("لوحة إحصائيات سريعة")
 df_dash = df_all.copy()
 if df_dash.empty:
@@ -495,7 +533,7 @@ else:
     with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
-# ملخّص حسب الموظف
+# ---------------- ملخّص حسب الموظف ----------------
 df_stats = df_all.copy()
 if not df_stats.empty:
     df_stats["Inscription_norm"] = df_stats["Inscription"].fillna("").astype(str).str.strip().str.lower()
@@ -525,6 +563,59 @@ if not df_stats.empty:
     grp_base = grp_base.sort_values(by=["تنبيهات", "Clients"], ascending=[False, False])
     st.markdown("#### حسب الموظّف")
     st.dataframe(grp_base, use_container_width=True)
+
+# ======================= 🆕 📅 إحصائيات شهرية (اختيار شهر) =======================
+st.markdown("---")
+st.subheader("📅 إحصائيات شهرية (العملاء)")
+if not df_all.empty and "DateAjout_dt" in df_all.columns:
+    df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
+    months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
+    month_pick = st.selectbox("اختر شهر", months_avail, index=0 if months_avail else None, key="stats_month_pick")
+    if month_pick:
+        y, m = month_pick.split("-")
+        # فلترة على ذلك الشهر
+        month_mask = (df_all["DateAjout_dt"].dt.strftime("%Y-%m") == month_pick)
+        df_month = df_all[month_mask].copy()
+
+        total_clients_m = len(df_month)
+        total_inscrits_m = int((df_month["Inscription_norm"] == "oui").sum())
+        alerts_m = int(df_month["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum())
+        rate_m = round((total_inscrits_m / total_clients_m) * 100, 2) if total_clients_m else 0.0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("👥 عملاء هذا الشهر", f"{total_clients_m}")
+        c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
+        c3.metric("🚨 تنبيهات", f"{alerts_m}")
+        c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+
+        # حسب الموظّف
+        st.markdown("#### 👨‍💼 حسب الموظّف (هذا الشهر)")
+        grp_emp = (
+            df_month.groupby("__sheet_name", dropna=False)
+            .agg(
+                Clients=("Nom & Prénom","count"),
+                Inscrits=("Inscription_norm", lambda x: (x=="oui").sum()),
+                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip()!="").sum()),
+            )
+            .reset_index().rename(columns={"__sheet_name":"الموظف"})
+        )
+        grp_emp["% تسجيل"] = ((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
+        st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
+
+        # حسب التكوين
+        st.markdown("#### 📚 حسب التكوين (هذا الشهر)")
+        grp_form = (
+            df_month.groupby("Formation", dropna=False)
+            .agg(
+                Clients=("Nom & Prénom","count"),
+                Inscrits=("Inscription_norm", lambda x: (x=="oui").sum()),
+            )
+            .reset_index().rename(columns={"Formation":"التكوين"})
+        )
+        grp_form["% تسجيل"] = ((grp_form["Inscrits"]/grp_form["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
+        st.dataframe(grp_form.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
+else:
+    st.caption("لا توجد بيانات كافية لإظهار الإحصائيات الشهرية.")
 
 # ======================================================================
 #                تبويب "مداخيل (MB/Bizerte)" (Revenus/Dépenses)
@@ -629,9 +720,10 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             x2.metric("Total مصاريف", f"{(dep_admin + dep_struct + dep_inscr):,.2f}")
             x3.metric("إجمالي المتبقّي بالدروس (Reste Due)", f"{sum_reste_due:,.2f}")
 
-    # إضافة عملية جديدة
     st.markdown("---")
-    st.markdown("### ➕ إضافة عملية جديدة")
+    st.markdown("### ➕ إضافة عملية جديدة / ✏️ تعديل دفعة موجودة")
+
+    # ---------- اختيار عميل (لتوليد Libellé ولمعرفة السابق) ----------
     selected_client_info = None
     client_default_lib = ""
     emp_default = (employee or "")
@@ -643,27 +735,126 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         reg_df = reg_df[reg_df["Inscription_norm"].isin(["oui","inscrit"])]
         if role == "موظف" and employee:
             reg_df = reg_df[reg_df["__sheet_name"] == employee]
+        pick = None
+        options = []
         if not reg_df.empty:
             def _opt(row):
                 phone = format_display_phone(row.get("Téléphone",""))
                 return f"{row.get('Nom & Prénom','')} — {phone} — {row.get('Formation','')}  [{row.get('__sheet_name','')}]"
             options = [_opt(r) for _, r in reg_df.iterrows()]
             pick = st.selectbox("اختر عميلًا مُسجَّلًا", ["— بدون اختيار —"] + options, key="fin_client_pick")
-            if pick and pick != "— بدون اختيار —":
-                idx = options.index(pick); row = reg_df.iloc[idx]
-                selected_client_info = {
-                    "name": str(row.get("Nom & Prénom","")).strip(),
-                    "tel":  str(row.get("Téléphone","")).strip(),
-                    "formation": str(row.get("Formation","")).strip(),
-                    "emp": str(row.get("__sheet_name","")).strip()
-                }
-                client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
-                if not emp_default: emp_default = selected_client_info["emp"]
 
+        if pick and pick != "— بدون اختيار —":
+            idx = options.index(pick); row = reg_df.iloc[idx]
+            selected_client_info = {
+                "name": str(row.get("Nom & Prénom","")).strip(),
+                "tel":  str(row.get("Téléphone","")).strip(),
+                "formation": str(row.get("Formation","")).strip(),
+                "emp": str(row.get("__sheet_name","")).strip()
+            }
+            client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}".strip()
+            if not emp_default: emp_default = selected_client_info["emp"]
+
+            # 🆕 عرض الدفعات السابقة لنفس Libellé عبر جميع الأشهر
+            prev_df = find_revenus_across_months_for_libelle(branch, client_default_lib)
+            st.markdown("#### 💾 دفعات سابقة لنفس Libellé (جميع الأشهر)")
+            if prev_df.empty:
+                st.caption("لا توجد دفعات سابقة مسجّلة لنفس العنوان.")
+                paid_so_far_all = 0.0
+                last_reste = 0.0
+            else:
+                show_cols_prev = ["__mois","Date","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste","Mode","Employé","Catégorie","Note"]
+                show_cols_prev = [c for c in show_cols_prev if c in prev_df.columns]
+                st.dataframe(prev_df[show_cols_prev], use_container_width=True)
+                paid_so_far_all = float(prev_df["Montant_Total"].sum()) if "Montant_Total" in prev_df else 0.0
+                last_reste = float(prev_df["Reste"].iloc[-1]) if "Reste" in prev_df and not prev_df["Reste"].isna().all() else 0.0
+            st.info(f"🔎 مجموع المدفوع سابقًا لنفس Libellé عبر السنة: **{paid_so_far_all:,.2f}** — آخر Reste مسجّل: **{last_reste:,.2f}**")
+
+            # 🆕 ✏️ تعديل دفعة موجودة (نفس Libellé) — اختيار السطر ثم التعديل
+            st.markdown("### ✏️ تعديل دفعة موجودة (نفس Libellé)")
+            if 'edit_pick_idx' not in st.session_state:
+                st.session_state['edit_pick_idx'] = 0
+
+            if not prev_df.empty:
+                # نبني قائمة للاختيار (الشهر + التاريخ + المبالغ)
+                def _label_row(r):
+                    dt = r["Date"].strftime("%d/%m/%Y") if isinstance(r["Date"], pd.Timestamp) and not pd.isna(r["Date"]) else str(r["Date"])
+                    return f"[{r['__mois']}] {dt} — Admin:{r.get('Montant_Admin',0)} / Struct:{r.get('Montant_Structure',0)} / PréIns:{r.get('Montant_PreInscription',0)} / Total:{r.get('Montant_Total',0)} (Reste:{r.get('Reste',0)})"
+                choices = [_label_row(r) for _, r in prev_df.iterrows()]
+                pick_old = st.selectbox("اختر الدفعة للتعديل", choices, index=0)
+                sel_row = prev_df.iloc[choices.index(pick_old)]
+
+                # قيم أصلية
+                orig_date = sel_row["Date"].date() if isinstance(sel_row["Date"], pd.Timestamp) and not pd.isna(sel_row["Date"]) else date.today()
+                orig_admin = float(sel_row.get("Montant_Admin", 0.0) or 0.0)
+                orig_struct= float(sel_row.get("Montant_Structure", 0.0) or 0.0)
+                orig_preins= float(sel_row.get("Montant_PreInscription", 0.0) or 0.0)
+                orig_total = float(sel_row.get("Montant_Total", 0.0) or 0.0)
+                orig_reste = float(sel_row.get("Reste", 0.0) or 0.0)
+                orig_mode  = str(sel_row.get("Mode","") or "")
+                orig_emp   = str(sel_row.get("Employé","") or "")
+                orig_cat   = str(sel_row.get("Catégorie","") or "")
+                orig_note  = str(sel_row.get("Note","") or "")
+
+                with st.form("edit_existing_payment"):
+                    e1, e2, e3 = st.columns(3)
+                    new_date    = e1.date_input("Date", value=orig_date)
+                    new_mode    = e2.selectbox("Mode", ["Espèces","Virement","Carte","Chèque","Autre"], index=(["Espèces","Virement","Carte","Chèque","Autre"].index(orig_mode) if orig_mode in ["Espèces","Virement","Carte","Chèque","Autre"] else 0))
+                    new_emp     = e3.selectbox("Employé", all_employes if all_employes else [""], index=(all_employes.index(orig_emp) if (orig_emp in all_employes) else 0) if all_employes else 0)
+
+                    n1, n2, n3 = st.columns(3)
+                    new_admin  = n1.number_input("Montant Admin", min_value=0.0, value=float(orig_admin), step=10.0)
+                    new_struct = n2.number_input("Montant Structure", min_value=0.0, value=float(orig_struct), step=10.0)
+                    new_preins = n3.number_input("Montant Pré-Inscription", min_value=0.0, value=float(orig_preins), step=10.0)
+
+                    new_total  = float(new_admin) + float(new_struct)
+                    r1, r2 = st.columns(2)
+                    new_reste  = r1.number_input("Reste", min_value=0.0, value=float(orig_reste), step=10.0)
+                    new_cat    = r2.text_input("Catégorie", value=orig_cat or "Revenus")
+                    new_note   = st.text_area("Note", value=orig_note or "")
+
+                    if st.form_submit_button("💾 حفظ التعديل على نفس الصف"):
+                        try:
+                            # نفتح الورقة المعنية
+                            target_title = str(sel_row["__sheet_title"])
+                            ws = ensure_ws(target_title, FIN_REV_COLUMNS)
+                            # نلقى الصف عبر (Libellé + Date)
+                            row_idx = find_revenus_row_index(ws, client_default_lib, fmt_date(new_date if new_date else orig_date))
+                            if not row_idx:
+                                # إذا تغيّر التاريخ عن الأصلي، جرّب التاريخ الأصلي
+                                row_idx = find_revenus_row_index(ws, client_default_lib, fmt_date(orig_date))
+                            if not row_idx:
+                                st.error("❌ تعذّر تحديد الصف؛ راجع Libellé/Date.")
+                            else:
+                                # خريطة أعمدة
+                                header = ws.row_values(1)
+                                col_map = {h: (header.index(h)+1) for h in FIN_REV_COLUMNS if h in header}
+                                # تحديث القيم
+                                def _upd(h, val):
+                                    if h in col_map: ws.update_cell(row_idx, col_map[h], val)
+
+                                _upd("Date", fmt_date(new_date))
+                                _upd("Libellé", client_default_lib)
+                                _upd("Montant_Admin", f"{float(new_admin):.2f}")
+                                _upd("Montant_Structure", f"{float(new_struct):.2f}")
+                                _upd("Montant_PreInscription", f"{float(new_preins):.2f}")
+                                _upd("Montant_Total", f"{float(new_total):.2f}")
+                                _upd("Reste", f"{float(new_reste):.2f}")
+                                _upd("Mode", new_mode)
+                                _upd("Employé", new_emp)
+                                _upd("Catégorie", new_cat)
+                                _upd("Note", new_note)
+
+                                st.success("✅ تمّ تعديل الدفعة على نفس الصف")
+                                st.cache_data.clear(); st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ خطأ أثناء التعديل: {e}")
+
+    # ---------- نموذج الإضافة/الجديد كما قبل ----------
     with st.form("fin_add_row"):
         d1, d2, d3 = st.columns(3)
         date_val = d1.date_input("Date", value=datetime.today())
-        libelle  = d2.text_input("Libellé", value=(client_default_lib if kind=="Revenus" else ""))
+        libelle  = d2.text_input("Libellé", value=(client_default_lib if (kind=="Revenus" and client_default_lib) else ""))
         employe  = d3.selectbox("Employé", all_employes if all_employes else [""],
                                 index=(all_employes.index(emp_default) if (all_employes and emp_default in all_employes) else 0))
 
@@ -685,21 +876,23 @@ if tab_choice == "مداخيل (MB/Bizerte)":
             note_default = f"Client: {selected_client_info['name']} / {selected_client_info['formation']}" if selected_client_info else ""
             note = st.text_area("Note", value=note_default)
 
-            rev_df_current = fin_read_df(fin_month_title(mois, "Revenus", branch), "Revenus")
-            paid_so_far = 0.0
-            if not rev_df_current.empty and "Libellé" in rev_df_current.columns and "Montant_Total" in rev_df_current.columns:
-                same = rev_df_current[rev_df_current["Libellé"].fillna("").str.strip().str.lower() == libelle.strip().lower()]
-                paid_so_far = float(same["Montant_Total"].sum()) if not same.empty else 0.0
+            # 🆕 paid_so_far عبر كل الأشهر لنفس Libellé
+            if kind == "Revenus" and libelle.strip():
+                prev_df = find_revenus_across_months_for_libelle(branch, libelle)
+                paid_so_far = float(prev_df["Montant_Total"].sum()) if not prev_df.empty else 0.0
+            else:
+                paid_so_far = 0.0
+
             reste_calc = max(float(prix) - (paid_so_far + float(montant_total)), 0.0)
             reste_input = st.number_input("💳 الباقي للدفع (Reste)", min_value=0.0, value=float(round(reste_calc,2)), step=10.0,
-                                          help="يتحسب آليًا، وتنجم تبدّلو يدويًا")
+                                          help="يتحسب آليًا حسب جميع الدفعات لنفس Libellé خلال السنة")
 
             st.caption(
-                f"💡 Total (Admin+Structure): {montant_total:.2f} — مدفوع سابقًا لنفس Libellé: {paid_so_far:.2f} — "
+                f"💡 Total (Admin+Structure): {montant_total:.2f} — مدفوع سابقًا لنفس Libellé (كل الأشهر): {paid_so_far:.2f} — "
                 f"Reste المقترح: {reste_calc:.2f} — Pré-Inscription منفصل: {montant_preins:.2f}"
             )
 
-            if st.form_submit_button("✅ حفظ العملية"):
+            if st.form_submit_button("✅ حفظ العملية (إضافة جديدة)"):
                 if not libelle.strip():
                     st.error("Libellé مطلوب.")
                 elif prix <= 0:
@@ -846,7 +1039,7 @@ if tab_choice == "💼 خلاص الإدارة/المكوّنين":
                 st.success("تمّ الحفظ ✅"); st.cache_data.clear(); st.rerun()
 
 # ======================================================================
-#                                   CRM: منطقة الموظف
+#                                   CRM: منطقة الموظف + نقل + واتساب
 # ======================================================================
 def render_table(df_disp: pd.DataFrame):
     if df_disp.empty:
@@ -984,7 +1177,7 @@ if role == "موظف" and employee:
             except Exception as e:
                 st.error(f"❌ تعذّر إنشاء رابط واتساب: {e}")
 
-    # إضافة عميل جديد مختصرًا (تبقى كما هي إن لزم)
+    # إضافة عميل جديد
     st.markdown("### ➕ أضف عميل جديد")
     with st.form("emp_add_client"):
         col1, col2 = st.columns(2)
@@ -1088,7 +1281,6 @@ if role == "أدمن":
         vals = wslog.get_all_values()
         if vals and len(vals) > 1:
             df_log = pd.DataFrame(vals[1:], columns=vals[0])
-            # تنسيق التاريخ للعرض
             def _fmt_ts3(x):
                 try:
                     return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
