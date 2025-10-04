@@ -576,7 +576,13 @@ st.markdown("### 📅 إحصائيات حسب الشهر (الموظفون/ال�
 if not df_all.empty:
     df_stats = df_all.copy()
     df_stats["DateAjout_dt"] = pd.to_datetime(df_stats["Date ajout"], dayfirst=True, errors="coerce")
-    df_stats["MonthNameFR"]  = df_stats["DateAjout_dt"].dt.month.map(lambda x: FIN_MONTHS_FR[x-1] if pd.notna(x) else "")
+# تحويل رقم الشهر إلى اسم فرنسي بطريقة آمنة
+month_map = {
+    1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
+    5: "Mai", 6: "Juin", 7: "Juillet", 8: "Aout",
+    9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre"
+}
+df_stats["MonthNameFR"] = df_stats["DateAjout_dt"].dt.month.map(month_map).fillna("")
     month_pick = st.selectbox("اختر شهر", FIN_MONTHS_FR, index=datetime.now().month-1, key="stats_month_pick")
     subset = df_stats[df_stats["MonthNameFR"] == month_pick].copy()
     subset["Inscription_norm"] = subset["Inscription"].fillna("").astype(str).str.strip().str.lower()
