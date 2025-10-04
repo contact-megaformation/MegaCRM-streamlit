@@ -576,7 +576,7 @@ st.markdown("### 📅 إحصائيات حسب الشهر (الموظفون/ال�
 if not df_all.empty:
     df_stats = df_all.copy()
     df_stats["DateAjout_dt"] = pd.to_datetime(df_stats["Date ajout"], dayfirst=True, errors="coerce")
-# تحويل رقم الشهر إلى اسم فرنسي بطريقة آمنة
+    # تحويل رقم الشهر إلى اسم فرنسي بطريقة آمنة
 month_map = {
     1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
     5: "Mai", 6: "Juin", 7: "Juillet", 8: "Aout",
