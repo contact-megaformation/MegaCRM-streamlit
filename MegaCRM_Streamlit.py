@@ -1097,14 +1097,14 @@ if role == "موظف" and employee:
 
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
-       if not df_emp.empty:
-        df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
-        df_emp = df_emp.dropna(subset=["DateAjout_dt"])
-        df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
-        month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
-        filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
+    if not df_emp.empty:
+       df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
+       df_emp = df_emp.dropna(subset=["DateAjout_dt"])
+       df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
+       month_filter = st.selectbox("🗓️ اختر شهر الإضافة", sorted(df_emp["Mois"].dropna().unique(), reverse=True))
+       filtered_df = df_emp[df_emp["Mois"] == month_filter].copy()
     else:
-        st.warning("⚠️ لا يوجد أي عملاء بعد."); filtered_df = pd.DataFrame() 
+       st.warning("⚠️ لا يوجد أي عملاء بعد."); filtered_df = pd.DataFrame() 
 # ======== عرض العملاء الذين لديهم تنبيهات + ملاحظات سريعة + Tag ========
 # يفترض أن المتغيّرات التالية موجودة من قبل:
 # - df_emp: داتا الموظّف
