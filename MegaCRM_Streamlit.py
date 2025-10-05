@@ -1104,7 +1104,109 @@ if role == "موظف" and employee:
 
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
+# ======== عرض العملاء الذين لديهم تنبيهات + ملاحظات سريعة + Tag ========
+# يفترض أن المتغيّرات التالية موجودة من قبل:
+# - df_emp: داتا الموظّف
+# - filtered_df: الداتا بعد فلترة الشهر/التكوين
+# - employee: اسم ورقة الموظّف
+# - EXPECTED_HEADERS, normalize_tn_phone, format_display_phone, fmt_date, client, SPREADSHEET_ID متوفّرين
+# - render_table(df) موجودة لعرض الداتا (أو استبدلها بـ st.dataframe(df))
 
+# --- 1) عرض العملاء الذين لديهم تنبيهات ---
+if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+    _df_alerts = filtered_df.copy()
+    _df_alerts["Alerte"] = _df_alerts.get("Alerte_view", "")
+    alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip() != ""]
+    st.markdown("### 🚨 عملاء مع تنبيهات")
+    if alerts_df.empty:
+        st.info("لا توجد تنبيهات حاليًا ضمن الفلترة.")
+    else:
+        # استخدم دالتك render_table إن موجودة
+        try:
+            render_table(alerts_df)
+        except NameError:
+            st.dataframe(alerts_df, use_container_width=True)
+
+# --- 2) 📝 ملاحظات سريعة ---
+if not df_emp.empty:
+    st.markdown("### 📝 أضف ملاحظة (سريعة)")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+
+    tel_to_update_key = st.selectbox(
+        "اختر العميل",
+        [
+            f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}"
+            for _, r in scope_df.iterrows()
+            if str(r.get('Téléphone','')).strip() != ""
+        ],
+        key="note_quick_pick"
+    )
+
+    tel_to_update = normalize_tn_phone(tel_to_update_key.split("—")[-1]) if tel_to_update_key else ""
+    new_note_quick = st.text_area("🗒️ ملاحظة جديدة (سيضاف لها طابع زمني)", key="note_quick_txt")
+
+    if st.button("📌 أضف الملاحظة", key="note_quick_btn"):
+        try:
+            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+            values = ws.get_all_values()
+            header = values[0] if values else []
+            if "Téléphone" in header:
+                tel_idx = header.index("Téléphone")
+                row_idx = None
+                for i, r in enumerate(values[1:], start=2):
+                    if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_to_update:
+                        row_idx = i
+                        break
+                if not row_idx:
+                    st.error("❌ الهاتف غير موجود.")
+                else:
+                    rem_col = EXPECTED_HEADERS.index("Remarque") + 1
+                    old_remark = ws.cell(row_idx, rem_col).value or ""
+                    stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    updated = (old_remark + "\n" if old_remark else "") + f"[{stamp}] {new_note_quick.strip()}"
+                    ws.update_cell(row_idx, rem_col, updated)
+                    st.success("✅ تمت إضافة الملاحظة")
+                    st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
+
+    # --- 3) 🎨 تلوين/Tag ---
+    st.markdown("### 🎨 اختر لون/Tag للعميل")
+    tel_color_key = st.selectbox(
+        "اختر العميل",
+        [
+            f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}"
+            for _, r in scope_df.iterrows()
+            if str(r.get('Téléphone','')).strip() != ""
+        ],
+        key="tag_select"
+    )
+    tel_color = normalize_tn_phone(tel_color_key.split("—")[-1]) if tel_color_key else ""
+    hex_color = st.color_picker("اختر اللون")
+
+    if st.button("🖌️ تلوين"):
+        try:
+            ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+            values = ws.get_all_values()
+            header = values[0] if values else []
+            row_idx = None
+            if "Téléphone" in header:
+                tel_idx = header.index("Téléphone")
+                for i, r in enumerate(values[1:], start=2):
+                    if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == tel_color:
+                        row_idx = i
+                        break
+            if not row_idx:
+                st.error("❌ لم يتم إيجاد العميل.")
+            else:
+                color_cell = EXPECTED_HEADERS.index("Tag") + 1
+                ws.update_cell(row_idx, color_cell, hex_color)
+                st.success("✅ تم التلوين")
+                st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
     # نقل عميل + ✅ Log: شكون حرّك
     st.markdown("### 🔁 نقل عميل بين الموظفين")
     if all_employes:
