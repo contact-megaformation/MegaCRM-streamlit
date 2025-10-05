@@ -1171,6 +1171,126 @@ if not df_emp.empty:
                     st.cache_data.clear()
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
+# ======== ✏️ تعديل بيانات عميل (مع إضافة ملاحظة بالطابع الزمني) ========
+if not df_emp.empty:
+    st.markdown("### ✏️ تعديل بيانات عميل")
+
+    # تجهيز قائمة اختيار العميل بالاسم + الهاتف
+    df_emp_edit = df_emp.copy()
+    df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
+
+    phone_choices = {
+        f"[{i}] {row['Nom & Prénom']} — {format_display_phone(row['Téléphone_norm'])}": row["Téléphone_norm"]
+        for i, row in df_emp_edit.iterrows()
+        if str(row.get("Téléphone","")).strip() != ""
+    }
+
+    if phone_choices:
+        chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(phone_choices.keys()), key="edit_pick")
+        chosen_phone = phone_choices.get(chosen_key, "")
+
+        # جلب الصف الحالي للقيم الافتراضية
+        cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0] if chosen_phone else None
+
+        cur_name      = str(cur_row.get("Nom & Prénom","")) if cur_row is not None else ""
+        cur_tel_raw   = str(cur_row.get("Téléphone",""))    if cur_row is not None else ""
+        cur_formation = str(cur_row.get("Formation",""))    if cur_row is not None else ""
+        cur_remark    = str(cur_row.get("Remarque",""))     if cur_row is not None else ""
+        cur_ajout = (
+            pd.to_datetime(cur_row.get("Date ajout",""), dayfirst=True, errors="coerce").date()
+            if cur_row is not None else date.today()
+        )
+        cur_suivi = (
+            pd.to_datetime(cur_row.get("Date de suivi",""), dayfirst=True, errors="coerce").date()
+            if cur_row is not None and str(cur_row.get("Date de suivi","")).strip()
+            else date.today()
+        )
+        cur_insc  = str(cur_row.get("Inscription","")).strip().lower() if cur_row is not None else ""
+
+        # مفاتيح ديناميكية لضمان عدم تضارب عناصر الإدخال
+        name_key   = f"edit_name_txt::{chosen_phone}"
+        phone_key  = f"edit_phone_txt::{chosen_phone}"
+        form_key   = f"edit_formation_txt::{chosen_phone}"
+        ajout_key  = f"edit_ajout_dt::{chosen_phone}"
+        suivi_key  = f"edit_suivi_dt::{chosen_phone}"
+        insc_key   = f"edit_insc_sel::{chosen_phone}"
+        remark_key = f"edit_remark_txt::{chosen_phone}"
+        note_key   = f"append_note_txt::{chosen_phone}"
+
+        col1, col2 = st.columns(2)
+        with col1:
+            new_name      = st.text_input("👤 الاسم و اللقب", value=cur_name, key=name_key)
+            new_phone_raw = st.text_input("📞 رقم الهاتف", value=cur_tel_raw, key=phone_key)
+            new_formation = st.text_input("📚 التكوين", value=cur_formation, key=form_key)
+        with col2:
+            new_ajout = st.date_input("🕓 تاريخ الإضافة", value=cur_ajout, key=ajout_key)
+            new_suivi = st.date_input("📆 تاريخ المتابعة", value=cur_suivi, key=suivi_key)
+            new_insc  = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], index=(1 if cur_insc == "oui" else 0), key=insc_key)
+
+        # استبدال كامل للملاحظة + ملاحظة إضافية تُضاف مع الطابع الزمني
+        new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=cur_remark, key=remark_key)
+        extra_note      = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…", key=note_key)
+
+        # دالة مساعدة للعثور على الصف حسب الهاتف
+        def _find_row_by_phone(ws, phone_digits: str) -> int | None:
+            values = ws.get_all_values()
+            if not values:
+                return None
+            header = values[0]
+            if "Téléphone" not in header:
+                return None
+            tel_idx = header.index("Téléphone")
+            for i, r in enumerate(values[1:], start=2):
+                if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == phone_digits:
+                    return i
+            return None
+
+        if st.button("💾 حفظ التعديلات", key="save_all_edits"):
+            try:
+                ws = client.open_by_key(SPREADSHEET_ID).worksheet(employee)
+                row_idx = _find_row_by_phone(ws, normalize_tn_phone(chosen_phone))
+                if not row_idx:
+                    st.error("❌ تعذّر إيجاد الصف لهذا الهاتف.")
+                else:
+                    # خريطة الأعمدة التي سنعدلها
+                    col_map = {h: (EXPECTED_HEADERS.index(h) + 1) for h in [
+                        "Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"
+                    ]}
+
+                    # تحقّقات أساسية
+                    new_phone_norm = normalize_tn_phone(new_phone_raw)
+                    if not new_name.strip():
+                        st.error("❌ الاسم و اللقب إجباري."); st.stop()
+                    if not new_phone_norm.strip():
+                        st.error("❌ رقم الهاتف إجباري."); st.stop()
+
+                    # منع تكرار الهاتف مع أي عميل آخر
+                    phones_except_current = (set(df_all["Téléphone_norm"].astype(str)) - {normalize_tn_phone(chosen_phone)})
+                    if new_phone_norm in phones_except_current:
+                        st.error("⚠️ الرقم موجود مسبقًا لعميل آخر."); st.stop()
+
+                    # التحديثات الأساسية
+                    ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
+                    ws.update_cell(row_idx, col_map["Téléphone"],   new_phone_norm)
+                    ws.update_cell(row_idx, col_map["Formation"],   new_formation.strip())
+                    ws.update_cell(row_idx, col_map["Date ajout"],  fmt_date(new_ajout))
+                    ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
+                    ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
+
+                    # الملاحظات: استبدال كامل إن تغيّرت، وإلحاق ملاحظة جديدة إن وُجدت
+                    if new_remark_full.strip() != cur_remark.strip():
+                        ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
+
+                    if extra_note.strip():
+                        old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
+                        stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                        appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
+                        ws.update_cell(row_idx, col_map["Remarque"], appended)
+
+                    st.success("✅ تم حفظ التعديلات")
+                    st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ أثناء التعديل: {e}")
 
     # --- 3) 🎨 تلوين/Tag ---
     st.markdown("### 🎨 اختر لون/Tag للعميل")
