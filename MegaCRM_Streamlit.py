@@ -9,6 +9,7 @@ import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
+from gspread.exceptions import APIError, WorksheetNotFound
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
@@ -26,62 +27,33 @@ st.markdown(
 )
 
 # ---------------- Google Sheets Auth ----------------
+# 🔴 مهم: زدنا Drive scope باش يخدم حتى لو الملف في Shared Drive
 SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"  # مهم لملفات في Shared Drive/للوصول للميتاداتا
+    "https://www.googleapis.com/auth/drive"
 ]
+
 def make_client_and_sheet_id():
     """
-    تعتمد فقط على .streamlit/secrets.toml
-    إذا الأسرار ناقصة، نعرض رسالة واضحة ونوقف التطبيق.
+    يقرى من st.secrets (المفضل في Streamlit Cloud). إذا ما لقاش، يطيح على ملف service_account.json محلي.
+    SPREADSHEET_ID لازم يكون في secrets.toml.
     """
     try:
-        # نقرأ جدول [gcp_service_account] من secrets
-        sa = st.secrets.get("gcp_service_account", None)
-        if not sa:
-            raise KeyError("gcp_service_account_missing")
-
-        # يدعم الشكل dict (TOML) أو نص JSON خام
-        sa_info = json.loads(sa) if isinstance(sa, str) else dict(sa)
-
-        # نجهز Credentials
+        sa = st.secrets["gcp_service_account"]
+        sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
         creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
         client = gspread.authorize(creds)
-
-        # لازم يكون SPREADSHEET_ID موجود في secrets
-        sheet_id = st.secrets.get("SPREADSHEET_ID", "").strip()
-        if not sheet_id:
-            raise KeyError("SPREADSHEET_ID_missing")
-
+        sheet_id = st.secrets["SPREADSHEET_ID"]
+        return client, sheet_id
+    except Exception:
+        # لو محليًا: وفّر service_account.json في جذر المشروع وخلي ID صحيح
+        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
+        client = gspread.authorize(creds)
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها بملفّك
         return client, sheet_id
 
-    except Exception as e:
-        st.error(
-            "⚠️ التهيئة ناقصة: تأكد من وجود `.streamlit/secrets.toml` فيه "
-            "`[gcp_service_account]` و `SPREADSHEET_ID` بصيغة صحيحة.\n\n"
-            "مثال جاهز:\n"
-            "```\n"
-            "[gcp_service_account]\n"
-            'type = "service_account"\n'
-            'project_id = "megacrm-470416"\n'
-            'private_key_id = "..." \n'
-            'private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"\n'
-            'client_email = "megacrm25@megacrm-470416.iam.gserviceaccount.com"\n'
-            'client_id = "116752380500960989805"\n'
-            'auth_uri = "https://accounts.google.com/o/oauth2/auth"\n'
-            'token_uri = "https://oauth2.googleapis.com/token"\n'
-            'auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"\n'
-            'client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/megacrm25%40megacrm-470416.iam.gserviceaccount.com"\n'
-            '\nSPREADSHEET_ID = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"\n'
-            '\n[branch_passwords]\nMB = "MB_2025!"\nBZ = "BZ_2025!"\n'
-            '\nadmin_password = "admin123"\n'
-            '\n[employee_passwords]\n_default = "1234"\n"Olfa" = "1234"\n"Ons" = "1234"\n'
-            "```"
-        )
-        st.stop()
-
-# نَنْدُوها:
 client, SPREADSHEET_ID = make_client_and_sheet_id()
+st.caption(f"🔧 Using sheet: {SPREADSHEET_ID[:6]}… — Service: (service account from secrets/file)")
 
 # ======================================================================
 #                               CONSTANTS
@@ -174,10 +146,24 @@ def _to_num_series_any(s):
     )
 
 def ensure_ws(title: str, columns: list[str]):
-    sh = client.open_by_key(SPREADSHEET_ID)
+    # 👇 رسائل خطأ أوضح إذا ما ينجّمش يفتح الشيت
+    try:
+        sh = client.open_by_key(SPREADSHEET_ID)
+    except APIError as e:
+        st.error(
+            "🚫 ما نجّمش نحلّ Google Sheet.\n\n"
+            "تحقّق من:\n"
+            "1) SPREADSHEET_ID صحيح في secrets.toml\n"
+            "2) الملف مْشَارَك مع البريد: "
+            "megacrm25@megacrm-470416.iam.gserviceaccount.com (Editor)\n"
+            "3) لو الملف في Shared Drive، راهو Drive scope مضاف في الكود."
+        )
+        st.exception(e)
+        st.stop()
+
     try:
         ws = sh.worksheet(title)
-    except gspread.WorksheetNotFound:
+    except WorksheetNotFound:
         ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
         ws.update("1:1", [columns])
         return ws
@@ -614,7 +600,6 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
     month_pick = st.selectbox("اختر شهر", months_avail, index=0 if months_avail else None, key="stats_month_pick")
     if month_pick:
-        y, m = month_pick.split("-")
         month_mask = (df_all["DateAjout_dt"].dt.strftime("%Y-%m") == month_pick)
         df_month = df_all[month_mask].copy()
 
