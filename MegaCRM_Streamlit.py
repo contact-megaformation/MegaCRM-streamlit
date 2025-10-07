@@ -26,8 +26,10 @@ st.markdown(
 )
 
 # ---------------- Google Sheets Auth ----------------
-SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
-
+SCOPE = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive"  # مهم لملفات في Shared Drive/للوصول للميتاداتا
+]
 def make_client_and_sheet_id():
     """
     تعتمد فقط على .streamlit/secrets.toml
