@@ -34,7 +34,7 @@ def make_client_and_sheet_id():
         sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
         creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
         client = gspread.authorize(creds)
-        sheet_id = st.secrets["SPREADSHEET_ID"]
+        sheet_id = st.secrets["1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"]
         return client, sheet_id
     except Exception:
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
