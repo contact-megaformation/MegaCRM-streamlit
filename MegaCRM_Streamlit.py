@@ -10,6 +10,7 @@ import streamlit as st
 import pandas as pd
 import gspread
 from gspread.exceptions import APIError, WorksheetNotFound
+import time
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
@@ -26,18 +27,13 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# ---------------- Google Sheets Auth ----------------
-# 🔴 مهم: زدنا Drive scope باش يخدم حتى لو الملف في Shared Drive
+# -------- Google Sheets Auth --------
 SCOPE = [
     "https://www.googleapis.com/auth/spreadsheets",
-    "https://www.googleapis.com/auth/drive"
+    "https://www.googleapis.com/auth/drive",
 ]
 
-def make_client_and_sheet_id():
-    """
-    يقرى من st.secrets (المفضل في Streamlit Cloud). إذا ما لقاش، يطيح على ملف service_account.json محلي.
-    SPREADSHEET_ID لازم يكون في secrets.toml.
-    """
+def _make_client_and_sheet_id():
     try:
         sa = st.secrets["gcp_service_account"]
         sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
@@ -45,6 +41,23 @@ def make_client_and_sheet_id():
         client = gspread.authorize(creds)
         sheet_id = st.secrets["SPREADSHEET_ID"]
         return client, sheet_id
+    except Exception:
+        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
+        client = gspread.authorize(creds)
+        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"
+        return client, sheet_id
+
+@st.cache_resource
+def get_client_and_sheet():
+    return _make_client_and_sheet_id()
+
+client, SPREADSHEET_ID = get_client_and_sheet()
+
+@st.cache_resource
+def get_spreadsheet():
+    # افتح الملف مرّة وحدة فقط (يُعاد استخدامه)
+    return client.open_by_key(SPREADSHEET_ID)
+
     except Exception:
         # لو محليًا: وفّر service_account.json في جذر المشروع وخلي ID صحيح
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
@@ -146,36 +159,23 @@ def _to_num_series_any(s):
     )
 
 def ensure_ws(title: str, columns: list[str]):
-    # 👇 رسائل خطأ أوضح إذا ما ينجّمش يفتح الشيت
-    try:
-        sh = client.open_by_key(SPREADSHEET_ID)
-    except APIError as e:
-        st.error(
-            "🚫 ما نجّمش نحلّ Google Sheet.\n\n"
-            "تحقّق من:\n"
-            "1) SPREADSHEET_ID صحيح في secrets.toml\n"
-            "2) الملف مْشَارَك مع البريد: "
-            "megacrm25@megacrm-470416.iam.gserviceaccount.com (Editor)\n"
-            "3) لو الملف في Shared Drive، راهو Drive scope مضاف في الكود."
-        )
-        st.exception(e)
-        st.stop()
+    sh = get_spreadsheet()
 
     try:
-        ws = sh.worksheet(title)
+        ws = with_backoff(sh.worksheet, title)
     except WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
-        ws.update("1:1", [columns])
+        ws = with_backoff(sh.add_worksheet, title=title, rows="2000", cols=str(max(len(columns), 8)))
+        with_backoff(ws.update, "1:1", [columns])
         return ws
-    rows = ws.get_all_values()
+
+    rows = with_backoff(ws.get_all_values)
     if not rows:
-        ws.update("1:1", [columns])
+        with_backoff(ws.update, "1:1", [columns])
     else:
         header = rows[0]
         if not header or header[:len(columns)] != columns:
-            ws.update("1:1", [columns])
+            with_backoff(ws.update, "1:1", [columns])
     return ws
-
 # ======================================================================
 #                               InterNotes
 # ======================================================================
