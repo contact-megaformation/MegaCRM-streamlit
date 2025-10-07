@@ -5,6 +5,7 @@
 # - ✏️ تعديل/تكملة دفعة موجودة: بحث على جميع الأشهر لنفس Libellé وتعديل نفس الصف داخل ورقة الشهر
 # - Payouts تبقى كما هي، و Reassign_Log يسجّل "شكون حرّك" العميل
 
+
 import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
@@ -15,144 +16,57 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
 
+
 # ---------------- Page config ----------------
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
-    """
-    <div style='text-align:center;'>
-        <h1 style='color:#333; margin-top: 8px;'>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
-    </div>
-    <hr>
-    """,
-    unsafe_allow_html=True
+"""
+<div style='text-align:center;'>
+<h1 style='color:#333; margin-top: 8px;'>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
+</div>
+<hr>
+""",
+unsafe_allow_html=True
 )
+
 
 # ---------------- Google Sheets Auth ----------------
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 
+
+# ✅ دالة توثيق محسّنة (secrets → ENV → ملف محلّي) مع رسائل واضحة
+
+
+def _fatal(msg: str):
+st.error(msg)
+st.stop()
+
+
+
+
 def make_client_and_sheet_id():
-    try:
-        sa = st.secrets["gcp_service_account"]
-        sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
-        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
-        client = gspread.authorize(creds)
-        sheet_id = st.secrets["SPREADSHEET_ID"]
-        return client, sheet_id
-    except Exception:
-        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
-        client = gspread.authorize(creds)
-        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها إذا يلزم
-        return client, sheet_id
+"""يحاول يجلب الاعتماد بثلاث طرق:
+1) st.secrets[gcp_service_account] + st.secrets[SPREADSHEET_ID]
+2) GOOGLE_APPLICATION_CREDENTIALS (ENV)
+3) ملف service_account.json محلّي
+"""
+sa_info = None
+sheet_id = None
 
-client, SPREADSHEET_ID = make_client_and_sheet_id()
 
-# ======================================================================
-#                               CONSTANTS
-# ======================================================================
-INTER_NOTES_SHEET = "InterNotes"
-INTER_NOTES_HEADERS = ["timestamp","sender","receiver","message","status","note_id"]
-
-REASSIGN_LOG_SHEET   = "Reassign_Log"
-REASSIGN_LOG_HEADERS = ["timestamp","moved_by","src_employee","dst_employee","client_name","phone"]
-
-EXPECTED_HEADERS = [
-    "Nom & Prénom","Téléphone","Type de contact","Formation",
-    "Remarque","Date ajout","Date de suivi","Alerte",
-    "Inscription","Employe","Tag"
-]
-
-FIN_REV_COLUMNS = [
-    "Date", "Libellé", "Prix",
-    "Montant_Admin", "Montant_Structure", "Montant_PreInscription", "Montant_Total",
-    "Echeance", "Reste",
-    "Mode", "Employé", "Catégorie", "Note"
-]
-FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"]
-
-# 🆕 Payouts (خلاص الإدارة/المكوّنين)
-PAYOUTS_COLUMNS = [
-    "Date", "Type", "Personne", "Libellé", "Montant",
-    "Caisse_Source", "Mode", "Employé", "Note"
-]
-
-FIN_MONTHS_FR = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Décembre"]
-
-def fin_month_title(mois: str, kind: str, branch: str):
-    prefix = "Revenue " if kind == "Revenus" else ("Dépense " if kind == "Dépenses" else "Payout ")
-    short = "MB" if "Menzel" in branch else "BZ"
-    return f"{prefix}{mois} ({short})"
-
-def _branch_passwords():
-    try:
-        b = st.secrets["branch_passwords"]
-        return {"Menzel Bourguiba": str(b.get("MB", "MB_2025!")), "Bizerte": str(b.get("BZ", "BZ_2025!"))}
-    except Exception:
-        return {"Menzel Bourguiba": "MB_2025!", "Bizerte": "BZ_2025!"}
-
-# ======================================================================
-#                               HELPERS
-# ======================================================================
-def safe_unique_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    df = df.copy()
-    df.columns = pd.Index(df.columns).astype(str)
-    return df.loc[:, ~df.columns.duplicated(keep="first")]
-
-def fmt_date(d: date | None) -> str:
-    return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
-
-def normalize_tn_phone(s: str) -> str:
-    digits = "".join(ch for ch in str(s) if ch.isdigit())
-    if digits.startswith("216"): return digits
-    if len(digits) == 8: return "216" + digits
-    return digits
-
-def format_display_phone(s: str) -> str:
-    d = "".join(ch for ch in str(s) if s is not None and ch.isdigit())
-    return f"+{d}" if d else ""
-
-def color_tag(val):
-    if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
-        return f"background-color: {val}; color: white;"
-    return ""
-
-def mark_alert_cell(val: str):
-    s = str(val).strip()
-    if not s: return ''
-    if "متأخر" in s: return 'background-color: #ffe6b3; color: #7a4e00'
-    return 'background-color: #ffcccc; color: #7a0000'
-
-def highlight_inscrit_row(row: pd.Series):
-    insc = str(row.get("Inscription", "")).strip().lower()
-    return ['background-color: #d6f5e8' if insc in ("inscrit","oui") else '' for _ in row.index]
-
-def _to_num_series_any(s):
-    return (
-        pd.Series(s).astype(str)
-        .str.replace(" ", "", regex=False)
-        .str.replace(",", ".", regex=False)
-        .pipe(pd.to_numeric, errors="coerce")
-        .fillna(0.0)
-    )
-
-def ensure_ws(title: str, columns: list[str]):
-    sh = _open_sheet_with_retry(SPREADSHEET_ID, tries=3)
-    try:
-        ws = sh.worksheet(title)
-    except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
-        ws.update("1:1", [columns])
-        return ws
-
-    rows = ws.get_all_values()
-    if not rows:
-        ws.update("1:1", [columns])
-    else:
-        header = rows[0]
-        if not header or header[:len(columns)] != columns:
-            ws.update("1:1", [columns])
-    return ws
+# (1) من secrets
+try:
+if "gcp_service_account" in st.secrets:
+raw = st.secrets["gcp_service_account"]
+if isinstance(raw, str):
+sa_info = json.loads(raw)
+else:
+sa_info = dict(raw)
+if "SPREADSHEET_ID" in st.secrets:
+sheet_id = str(st.secrets["SPREADSHEET_ID"]).strip()
+except Exception:
+pass
+return ws
 # ======================================================================
 #                               InterNotes
 # ======================================================================
