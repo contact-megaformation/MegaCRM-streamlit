@@ -9,6 +9,8 @@ import json, time, urllib.parse, base64, uuid
 import streamlit as st
 import pandas as pd
 import gspread
+import os
+from gspread.exceptions import APIError
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
@@ -135,13 +137,14 @@ def _to_num_series_any(s):
     )
 
 def ensure_ws(title: str, columns: list[str]):
-    sh = client.open_by_key(SPREADSHEET_ID)
+    sh = _open_sheet_with_retry(SPREADSHEET_ID, tries=3)
     try:
         ws = sh.worksheet(title)
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
         ws.update("1:1", [columns])
         return ws
+
     rows = ws.get_all_values()
     if not rows:
         ws.update("1:1", [columns])
@@ -150,7 +153,6 @@ def ensure_ws(title: str, columns: list[str]):
         if not header or header[:len(columns)] != columns:
             ws.update("1:1", [columns])
     return ws
-
 # ======================================================================
 #                               InterNotes
 # ======================================================================
