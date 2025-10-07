@@ -488,7 +488,7 @@ if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
     df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
     df_all["Mois"] = df_all["DateAjout_dt"].dt.strftime("%m-%Y")
-    today = datetime.now().date()
+    today = date.today()
     base_alert = df_all["Alerte"].fillna("").astype(str).str.strip()
     dsv_date = df_all["DateSuivi_dt"].dt.date
     due_today = dsv_date.eq(today).fillna(False)
@@ -513,10 +513,10 @@ if df_dash.empty:
 else:
     df_dash["DateAjout_dt"] = pd.to_datetime(df_dash.get("Date ajout"), dayfirst=True, errors="coerce")
     df_dash["DateSuivi_dt"] = pd.to_datetime(df_dash.get("Date de suivi"), dayfirst=True, errors="coerce")
-    today = datetime.now().date()
+    today_d = date.today()
     df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
     df_dash["Alerte_norm"]      = df_dash["Alerte_view"].fillna("").astype(str).str.strip()
-    added_today_mask      = df_dash["DateAjout_dt"].dt.date.eq(today)
+    added_today_mask      = df_dash["DateAjout_dt"].dt.date.eq(today_d)
     registered_today_mask = df_dash["Inscription_norm"].isin(["oui", "inscrit"]) & added_today_mask
     alert_now_mask        = df_dash["Alerte_norm"].ne("")
     total_clients    = int(len(df_dash))
@@ -540,8 +540,8 @@ if not df_stats.empty:
     df_stats["Alerte_norm"]      = df_stats["Alerte_view"].fillna("").astype(str).str.strip()
     df_stats["DateAjout_dt"]     = pd.to_datetime(df_stats.get("Date ajout"), dayfirst=True, errors="coerce")
     df_stats["DateSuivi_dt"]     = pd.to_datetime(df_stats.get("Date de suivi"), dayfirst=True, errors="coerce")
-    today = datetime.now().date()
-    added_today_mask      = df_stats["DateAjout_dt"].dt.date.eq(today)
+    today_d = date.today()
+    added_today_mask      = df_stats["DateAjout_dt"].dt.date.eq(today_d)
     registered_today_mask = df_stats["Inscription_norm"].isin(["oui","inscrit"]) & added_today_mask
     alert_now_mask        = df_stats["Alerte_norm"].ne("")
     df_stats["__added_today"] = added_today_mask
@@ -572,7 +572,6 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
     month_pick = st.selectbox("اختر شهر", months_avail, index=0 if months_avail else None, key="stats_month_pick")
     if month_pick:
-        y, m = month_pick.split("-")
         # فلترة على ذلك الشهر
         month_mask = (df_all["DateAjout_dt"].dt.strftime("%Y-%m") == month_pick)
         df_month = df_all[month_mask].copy()
@@ -628,7 +627,7 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         branch = st.selectbox("الفرع", ["Menzel Bourguiba", "Bizerte"], key="fin_branch")
         kind_ar = st.radio("النوع", ["مداخيل","مصاريف"], horizontal=True, key="fin_kind_ar")
         kind = "Revenus" if kind_ar == "مداخيل" else "Dépenses"
-        mois   = st.selectbox("الشهر", FIN_MONTHS_FR, index=datetime.now().month-1, key="fin_month")
+        mois   = st.selectbox("الشهر", FIN_MONTHS_FR, index=date.today().month-1, key="fin_month")
 
         BRANCH_PASSWORDS = _branch_passwords()
         key_pw = f"finance_pw_ok::{branch}"
@@ -770,13 +769,9 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                 last_reste = float(prev_df["Reste"].iloc[-1]) if "Reste" in prev_df and not prev_df["Reste"].isna().all() else 0.0
             st.info(f"🔎 مجموع المدفوع سابقًا لنفس Libellé عبر السنة: **{paid_so_far_all:,.2f}** — آخر Reste مسجّل: **{last_reste:,.2f}**")
 
-            # 🆕 ✏️ تعديل دفعة موجودة (نفس Libellé) — اختيار السطر ثم التعديل
+            # 🆕 ✏️ تعديل دفعة موجودة (نفس Libellé)
             st.markdown("### ✏️ تعديل دفعة موجودة (نفس Libellé)")
-            if 'edit_pick_idx' not in st.session_state:
-                st.session_state['edit_pick_idx'] = 0
-
             if not prev_df.empty:
-                # نبني قائمة للاختيار (الشهر + التاريخ + المبالغ)
                 def _label_row(r):
                     dt = r["Date"].strftime("%d/%m/%Y") if isinstance(r["Date"], pd.Timestamp) and not pd.isna(r["Date"]) else str(r["Date"])
                     return f"[{r['__mois']}] {dt} — Admin:{r.get('Montant_Admin',0)} / Struct:{r.get('Montant_Structure',0)} / PréIns:{r.get('Montant_PreInscription',0)} / Total:{r.get('Montant_Total',0)} (Reste:{r.get('Reste',0)})"
@@ -815,21 +810,19 @@ if tab_choice == "مداخيل (MB/Bizerte)":
 
                     if st.form_submit_button("💾 حفظ التعديل على نفس الصف"):
                         try:
-                            # نفتح الورقة المعنية
                             target_title = str(sel_row["__sheet_title"])
                             ws = ensure_ws(target_title, FIN_REV_COLUMNS)
                             # نلقى الصف عبر (Libellé + Date)
-                            row_idx = find_revenus_row_index(ws, client_default_lib, fmt_date(new_date if new_date else orig_date))
+                            wanted_date_str = fmt_date(new_date if new_date else orig_date)
+                            row_idx = find_revenus_row_index(ws, client_default_lib, wanted_date_str)
                             if not row_idx:
                                 # إذا تغيّر التاريخ عن الأصلي، جرّب التاريخ الأصلي
                                 row_idx = find_revenus_row_index(ws, client_default_lib, fmt_date(orig_date))
                             if not row_idx:
                                 st.error("❌ تعذّر تحديد الصف؛ راجع Libellé/Date.")
                             else:
-                                # خريطة أعمدة
                                 header = ws.row_values(1)
                                 col_map = {h: (header.index(h)+1) for h in FIN_REV_COLUMNS if h in header}
-                                # تحديث القيم
                                 def _upd(h, val):
                                     if h in col_map: ws.update_cell(row_idx, col_map[h], val)
 
@@ -850,10 +843,10 @@ if tab_choice == "مداخيل (MB/Bizerte)":
                         except Exception as e:
                             st.error(f"❌ خطأ أثناء التعديل: {e}")
 
-    # ---------- نموذج الإضافة/الجديد كما قبل ----------
+    # ---------- نموذج الإضافة/الجديد ----------
     with st.form("fin_add_row"):
         d1, d2, d3 = st.columns(3)
-        date_val = d1.date_input("Date", value=datetime.today())
+        date_val = d1.date_input("Date", value=date.today())
         libelle  = d2.text_input("Libellé", value=(client_default_lib if (kind=="Revenus" and client_default_lib) else ""))
         employe  = d3.selectbox("Employé", all_employes if all_employes else [""],
                                 index=(all_employes.index(emp_default) if (all_employes and emp_default in all_employes) else 0))
