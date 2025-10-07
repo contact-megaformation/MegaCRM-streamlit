@@ -29,19 +29,56 @@ st.markdown(
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 
 def make_client_and_sheet_id():
+    """
+    تعتمد فقط على .streamlit/secrets.toml
+    إذا الأسرار ناقصة، نعرض رسالة واضحة ونوقف التطبيق.
+    """
     try:
-        sa = st.secrets["gcp_service_account"]
-        sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
+        # نقرأ جدول [gcp_service_account] من secrets
+        sa = st.secrets.get("gcp_service_account", None)
+        if not sa:
+            raise KeyError("gcp_service_account_missing")
+
+        # يدعم الشكل dict (TOML) أو نص JSON خام
+        sa_info = json.loads(sa) if isinstance(sa, str) else dict(sa)
+
+        # نجهز Credentials
         creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
         client = gspread.authorize(creds)
-        sheet_id = st.secrets["SPREADSHEET_ID"]
-        return client, sheet_id
-    except Exception:
-        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
-        client = gspread.authorize(creds)
-        sheet_id = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"  # بدّلها إذا يلزم
+
+        # لازم يكون SPREADSHEET_ID موجود في secrets
+        sheet_id = st.secrets.get("SPREADSHEET_ID", "").strip()
+        if not sheet_id:
+            raise KeyError("SPREADSHEET_ID_missing")
+
         return client, sheet_id
 
+    except Exception as e:
+        st.error(
+            "⚠️ التهيئة ناقصة: تأكد من وجود `.streamlit/secrets.toml` فيه "
+            "`[gcp_service_account]` و `SPREADSHEET_ID` بصيغة صحيحة.\n\n"
+            "مثال جاهز:\n"
+            "```\n"
+            "[gcp_service_account]\n"
+            'type = "service_account"\n'
+            'project_id = "megacrm-470416"\n'
+            'private_key_id = "..." \n'
+            'private_key = "-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"\n'
+            'client_email = "megacrm25@megacrm-470416.iam.gserviceaccount.com"\n'
+            'client_id = "116752380500960989805"\n'
+            'auth_uri = "https://accounts.google.com/o/oauth2/auth"\n'
+            'token_uri = "https://oauth2.googleapis.com/token"\n'
+            'auth_provider_x509_cert_url = "https://www.googleapis.com/oauth2/v1/certs"\n'
+            'client_x509_cert_url = "https://www.googleapis.com/robot/v1/metadata/x509/megacrm25%40megacrm-470416.iam.gserviceaccount.com"\n'
+            '\nSPREADSHEET_ID = "1DV0KyDRYHofWR60zdx63a9BWBywTFhLavGAExPIa6LI"\n'
+            '\n[branch_passwords]\nMB = "MB_2025!"\nBZ = "BZ_2025!"\n'
+            '\nadmin_password = "admin123"\n'
+            '\n[employee_passwords]\n_default = "1234"\n"Olfa" = "1234"\n"Ons" = "1234"\n'
+            "```"
+        )
+        st.stop()
+
+# نَنْدُوها:
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
 # ======================================================================
