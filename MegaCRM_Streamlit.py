@@ -393,7 +393,7 @@ if tab_choice=="مداخيل (MB/Bizerte)":
             i3.metric("Reste Inscription", f"{reste_inscr:,.2f}")
             x1,x2,x3 = st.columns(3)
             x1.metric("Total Admin+Structure", f"{sum_total_as:,.2f}")
-            x2.metric("Total مصاريف", f"{(dep_admin+dep_struct+dep_inscr):, .2f}")
+            x2.metric("Total مصاريف", f"{(dep_admin+dep_struct+dep_inscr):,.2f}")
             x3.metric("إجمالي Reste Due", f"{sum_reste_due:,.2f}")
 
     # ---- إضافة عملية جديدة + ربط بعميل ----
