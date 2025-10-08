@@ -600,11 +600,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         )
         grp_emp["% تسجيل"] = ((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
         st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
-        # 🔎 بحث سريع (هاتف/اسم/تكوين)
-        search_q = st.text_input("🔎 بحث بالهاتف / الاسم / التكوين", key="crm_emp_search")
-        if search_q:
-            filtered_df = apply_crm_search(filtered_df, search_q)
-
+       
         # حسب التكوين
         st.markdown("#### 📚 حسب التكوين (هذا الشهر)")
         grp_form = (
