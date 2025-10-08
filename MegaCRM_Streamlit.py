@@ -9,7 +9,6 @@ import gspread.exceptions as gse
 from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
-ARCHIVE_PREFIX = "Archive_"
 # ================= Page & Header =================
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
@@ -60,7 +59,7 @@ FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé"
 
 REASSIGN_LOG_SHEET   = "Reassign_Log"
 REASSIGN_LOG_HEADERS = ["timestamp","moved_by","src_employee","dst_employee","client_name","phone"]
-
+ARCHIVE_PREFIX = "Archive_"
 # ================= Helpers =================
 def fmt_date(d: date|None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
