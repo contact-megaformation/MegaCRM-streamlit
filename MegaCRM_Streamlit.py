@@ -1,5 +1,5 @@
 # MegaCRM_Streamlit.py
-# CRM + Finance (MB/Bizerte) — نسخة مُحسّنة مع Backoff/Cache + تبويبة الأرشيف
+# CRM + Finance (MB/Bizerte) + Archive Tab — نسخة مُحسّنة مع Backoff/Cache
 
 import json, urllib.parse, time
 import streamlit as st
@@ -10,7 +10,7 @@ from google.oauth2.service_account import Credentials
 from datetime import datetime, date, timedelta, timezone
 from PIL import Image
 
-# =================== إعداد الصفحة ===================
+# ============ إعداد الصفحة ============
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
     """
@@ -21,7 +21,7 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
-# =================== Google Auth ===================
+# ============ Google Auth ============
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
 
 def make_client_and_sheet_id():
@@ -40,7 +40,7 @@ def make_client_and_sheet_id():
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
-# =================== الثوابت ===================
+# ============ ثوابت الجداول ============
 EXPECTED_HEADERS = [
     "Nom & Prénom","Téléphone","Type de contact","Formation",
     "Remarque","Date ajout","Date de suivi","Alerte",
@@ -60,9 +60,7 @@ FIN_DEP_COLUMNS = ["Date","Libellé","Montant","Caisse_Source","Mode","Employé"
 REASSIGN_LOG_SHEET   = "Reassign_Log"
 REASSIGN_LOG_HEADERS = ["timestamp","moved_by","src_employee","dst_employee","client_name","phone"]
 
-ARCHIVE_PREFIX = "Archive_"   # ورقة الأرشيف لكل موظف: Archive_<Employee>
-
-# =================== Helpers ===================
+# ============ Helpers ============
 def fmt_date(d: date|None) -> str:
     return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
 
@@ -112,21 +110,6 @@ def _to_num_series_any(s):
         .fillna(0.0)
     )
 
-def dedupe_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """حل مشكلة الأعمدة المكرّرة (مثلاً Note/Note.1)"""
-    df = df.copy()
-    seen = {}
-    new_cols = []
-    for c in df.columns:
-        if c not in seen:
-            seen[c] = 0
-            new_cols.append(c)
-        else:
-            seen[c] += 1
-            new_cols.append(f"{c}_{seen[c]}")
-    df.columns = new_cols
-    return df
-
 # ===================== Sheets Utils (Backoff + Cache) =====================
 def get_spreadsheet():
     """افتح الـ Spreadsheet مرة واحدة مع backoff، وأعد استعماله من session_state."""
@@ -175,7 +158,6 @@ def fin_read_df(title: str, kind: str) -> pd.DataFrame:
         return pd.DataFrame(columns=cols)
 
     df = pd.DataFrame(values[1:], columns=values[0] if values else cols)
-    df = dedupe_columns(df)  # منع تكرار أسماء الأعمدة
 
     # Dates
     if "Date" in df.columns:
@@ -209,7 +191,7 @@ def fin_append_row(title: str, row: dict, kind: str):
     ws.append_row(vals)
     _read_ws_all_values_cached.clear()  # امسح الكاش
 
-# =================== تحميل كل أوراق الموظفين ===================
+# ============ تحميل كل أوراق الموظفين ============
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = get_spreadsheet()
@@ -221,7 +203,6 @@ def load_all_data():
         if title.startswith("_"): continue
         if title.startswith("Revenue ") or title.startswith("Dépense "): continue
         if title in (REASSIGN_LOG_SHEET,): continue
-        if title.startswith(ARCHIVE_PREFIX): continue  # الأرشيف منفصل
 
         all_emps.append(title)
         rows = ws.get_all_values()
@@ -242,21 +223,17 @@ def load_all_data():
 
 df_all, all_employes = load_all_data()
 
-# =================== Sidebar ===================
+# ============ Sidebar ============
 try:
     st.sidebar.image(Image.open("logo.png"), use_container_width=True)
 except Exception:
     pass
 
-tab_choice = st.sidebar.radio(
-    "📑 اختر تبويب:",
-    ["CRM", "مداخيل (MB/Bizerte)", "📦 أرشيف العملاء"],
-    index=0
-)
+tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)", "أرشيف"], index=0)
 role = st.sidebar.radio("الدور", ["موظف","أدمن"], horizontal=True)
 employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if (role=="موظف" and all_employes) else None
 
-# =================== أقفال ===================
+# ============ أقفال ============
 def admin_unlocked() -> bool:
     ok = st.session_state.get("admin_ok", False)
     ts = st.session_state.get("admin_ok_at")
@@ -290,22 +267,17 @@ def emp_unlocked(emp_name:str)->bool:
     ts = st.session_state.get(f"emp_ok_at::{emp_name}")
     return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=15))
 
-def emp_lock_ui(emp_name: str, ns: str = "crm"):
-    # نعمل namespace ثابت من اسم الموظف + المكان (tab/section)
+def emp_lock_ui(emp_name: str, ns: str = ""):
     ns_prefix = f"{emp_name}::{ns}" if ns else emp_name
-
     with st.expander(f"🔐 حماية ورقة الموظّف: {emp_name}", expanded=not emp_unlocked(emp_name)):
         if emp_unlocked(emp_name):
             c1, c2 = st.columns(2)
             c1.success("مفتوح (15 دقيقة).")
-            # زر القفل بمفتاح فريد يتضمن الـ namespace
             if c2.button("قفل الآن", key=f"btn_close::{ns_prefix}"):
                 st.session_state[f"emp_ok::{emp_name}"] = False
                 st.session_state[f"emp_ok_at::{emp_name}"] = None
         else:
-            # حقـل الباس بمفتاح فريد
             pwd_try = st.text_input("أدخل كلمة السرّ", type="password", key=f"pwd::{ns_prefix}")
-            # زر الفتح بمفتاح فريد
             if st.button("فتح", key=f"btn_open::{ns_prefix}"):
                 if pwd_try == emp_pwd_for(emp_name):
                     st.session_state[f"emp_ok::{emp_name}"] = True
@@ -314,7 +286,7 @@ def emp_lock_ui(emp_name: str, ns: str = "crm"):
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
 
-# =================== مشتقات عامة ===================
+# ============ مشتقات عامة ============
 df_all = df_all.copy()
 if not df_all.empty:
     df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
@@ -337,7 +309,7 @@ if not df_all.empty:
 else:
     df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES=set()
 
-# =================== تبويب Finance ===================
+# ============ تبويب Finance ============
 if tab_choice=="مداخيل (MB/Bizerte)":
     st.header("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
 
@@ -363,7 +335,6 @@ if tab_choice=="مداخيل (MB/Bizerte)":
     df_fin = fin_read_df(fin_title, kind)
     df_view = df_fin.copy()
 
-    # الموظف يشوف كان معاملاتو
     if role=="موظف" and employee and "Employé" in df_view.columns:
         df_view = df_view[df_view["Employé"].fillna("").str.strip().str.lower() == employee.strip().lower()]
 
@@ -452,35 +423,31 @@ if tab_choice=="مداخيل (MB/Bizerte)":
             client_default_lib = f"Paiement {selected_client_info['formation']} - {selected_client_info['name']}"
             if not client_default_emp: client_default_emp = selected_client_info["emp"]
 
-            # --- الدفعات السابقة عبر كل الأشهر (مع معالجة تكرار الأعمدة) ---
+            # دفعات سابقة عبر كل الأشهر مع معالجة عمود Note المكرر/الناقص
             out = []
-            # قللنا القراءات: نجيب العناوين المتاحة فقط
             sh_titles = [w.title for w in get_spreadsheet().worksheets()]
             months_available = [m for m in FIN_MONTHS_FR if fin_month_title(m, "Revenus", branch) in sh_titles]
-
             for m in months_available:
                 t = fin_month_title(m, "Revenus", branch)
                 try:
                     dfm = fin_read_df(t, "Revenus")
                 except Exception:
                     dfm = pd.DataFrame(columns=FIN_REV_COLUMNS)
-                if dfm.empty:
-                    continue
+                if dfm.empty: continue
+                dfm = dfm.copy()
 
-                dfm = dedupe_columns(dfm).copy()
-
-                # جهّز عمود Note (حتى لو كان مش موجود أو مكرر)
-                note_cols = [c for c in dfm.columns if c.startswith("Note")]
-                if note_cols:
-                    note_series = dfm[note_cols[0]].astype(str)
+                # Note series آمنة
+                if "Note" in dfm.columns:
+                    tmp = dfm["Note"]
+                    if isinstance(tmp, pd.DataFrame):
+                        note_series = tmp.iloc[:, 0].astype(str)
+                    else:
+                        note_series = tmp.astype(str)
                 else:
                     note_series = pd.Series([""] * len(dfm), index=dfm.index, dtype=str)
 
-                lib_series = (
-                    dfm["Libellé"].astype(str).str.strip().str.lower()
-                    if "Libellé" in dfm.columns
-                    else pd.Series([""] * len(dfm), index=dfm.index, dtype=str)
-                )
+                lib_series = (dfm["Libellé"].astype(str).str.strip().str.lower() if "Libellé" in dfm.columns
+                              else pd.Series([""]*len(dfm), index=dfm.index, dtype=str))
                 cond_lib = lib_series.eq(client_default_lib.strip().lower())
                 cond_phone = note_series.str.contains(selected_client_info["tel"], na=False, regex=False)
 
@@ -490,32 +457,17 @@ if tab_choice=="مداخيل (MB/Bizerte)":
                     sub["__sheet_title"] = t
                     out.append(sub)
 
-            prev_df = (
-                pd.concat(out, ignore_index=True)
-                if out else pd.DataFrame(columns=FIN_REV_COLUMNS + ["__sheet_title", "__mois"])
-            )
-            prev_df = dedupe_columns(prev_df)
-
+            prev_df = pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=FIN_REV_COLUMNS+["__sheet_title","__mois"])
             st.markdown("#### 💾 دفعات سابقة (كل الأشهر)")
             if prev_df.empty:
                 st.caption("لا توجد دفعات مسجّلة.")
                 paid_so_far_all, last_reste = 0.0, 0.0
             else:
-                show_cols = [
-                    "__mois","Date","Montant_Admin","Montant_Structure",
-                    "Montant_PreInscription","Montant_Total","Reste",
-                    "Mode","Employé","Catégorie"
-                ]
-                # خذ أول Note فقط حتى لو فيه تكرار
-                note_col = next((c for c in prev_df.columns if c.startswith("Note")), None)
-                if note_col: show_cols.append(note_col)
+                show_cols = ["__mois","Date","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste","Mode","Employé","Catégorie","Note"]
                 show_cols = [c for c in show_cols if c in prev_df.columns]
                 st.dataframe(prev_df[show_cols], use_container_width=True)
                 paid_so_far_all = float(prev_df.get("Montant_Total", pd.Series(dtype=float)).sum())
-                last_reste = float(
-                    prev_df.get("Reste", pd.Series(dtype=float)).fillna(0).iloc[-1]
-                    if not prev_df.empty else 0.0
-                )
+                last_reste = float(prev_df.get("Reste", pd.Series(dtype=float)).fillna(0).iloc[-1] if not prev_df.empty else 0.0)
             st.info(f"🔎 المجموع السابق: {paid_so_far_all:,.2f} — آخر Reste: {last_reste:,.2f}")
 
     with st.form("fin_add_row"):
@@ -595,7 +547,7 @@ if tab_choice=="مداخيل (MB/Bizerte)":
 
     st.stop()
 
-# =================== Dashboard سريع ===================
+# ============ Dashboard سريع ============
 st.subheader("لوحة إحصائيات سريعة")
 df_dash = df_all.copy()
 if df_dash.empty:
@@ -622,7 +574,7 @@ else:
     c4.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     c5.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
-# =================== إحصائيات شهرية ===================
+# ============ إحصائيات شهرية ============
 st.markdown("---"); st.subheader("📅 إحصائيات شهرية (العملاء)")
 if not df_all.empty and "DateAjout_dt" in df_all.columns:
     df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
@@ -658,7 +610,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         grp_form["% تسجيل"]=((grp_form["Inscrits"]/grp_form["Clients"]).replace([float("inf"),float("nan")],0)*100).round(2)
         st.dataframe(grp_form.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
 
-# =================== بحث عام برقم الهاتف ===================
+# ============ بحث عام برقم الهاتف ============
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
 if global_phone.strip():
@@ -674,9 +626,9 @@ if global_phone.strip():
         )
         st.markdown("---")
 
-# =================== لوحة الموظف ===================
+# ============ تبويب CRM للموظّف ============
 if role=="موظف" and employee:
-    emp_lock_ui(employee)
+    emp_lock_ui(employee, ns="crm")
     if not emp_unlocked(employee):
         st.info("🔒 أدخل كلمة سرّ الموظّف لفتح الورقة."); st.stop()
 
@@ -862,72 +814,85 @@ if role=="موظف" and employee:
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
-    # --- 🗄️ أرشفة عميل ---
-    st.markdown("### 🗄️ أرشفة عميل (غير مهتم)")
-    df_src_arch = df_emp.copy()
-    if df_src_arch.empty:
-        st.info("ما فماش عملاء لأرشفتهم.")
+# ============ تبويب الأرشيف ============
+if tab_choice == "أرشيف" and role == "موظف" and employee:
+    emp_lock_ui(employee, ns="archive")
+    if not emp_unlocked(employee):
+        st.info("🔒 أدخل كلمة سرّ الموظّف لفتح الأرشيف."); st.stop()
+
+    st.subheader(f"🗂️ أرشيف — {employee}")
+    # ورقة الأرشيف الخاصة بالموظف
+    ARCHIVE_SHEET = f"{employee}_Archive"
+    ws_arch = ensure_ws(ARCHIVE_SHEET, EXPECTED_HEADERS)
+    vals_arch = ws_arch.get_all_values()
+    df_arch = pd.DataFrame(vals_arch[1:], columns=vals_arch[0]) if vals_arch and len(vals_arch)>1 else pd.DataFrame(columns=EXPECTED_HEADERS)
+
+    # عرض الأرشيف
+    if df_arch.empty:
+        st.info("لا يوجد عملاء في الأرشيف حالياً.")
     else:
-        pick_arch = st.selectbox("اختر العميل للأرشفة", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src_arch.iterrows()], key="archive_pick")
-        tel_pick = normalize_tn_phone(pick_arch.split("—")[-1])
-        if st.button("🗄️ أرشف العميل"):
+        df_arch["Téléphone_norm"] = df_arch["Téléphone"].apply(normalize_tn_phone)
+        df_arch["Alerte_view"] = df_arch.get("Alerte","")
+        st.dataframe(
+            df_arch[[c for c in EXPECTED_HEADERS if c in df_arch.columns]]
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"]),
+            use_container_width=True
+        )
+
+    st.markdown("---")
+    st.subheader("🔁 نقل/استرجاع")
+
+    # نقل من قائمة الموظف إلى الأرشيف
+    df_emp_all = df_all[df_all["__sheet_name"]==employee].copy()
+    if df_emp_all.empty:
+        st.caption("لا يوجد عملاء نشطين لنقلهم.")
+    else:
+        move_opt = st.selectbox("اختر عميل للنقل إلى الأرشيف", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_emp_all.iterrows()])
+        if st.button("📦 نقل إلى الأرشيف"):
             try:
                 sh = get_spreadsheet()
                 ws_emp = sh.worksheet(employee)
-                ws_arc = ensure_ws(f"{ARCHIVE_PREFIX}{employee}", EXPECTED_HEADERS)
-                values = ws_emp.get_all_values(); header = values[0]
-                tel_idx = header.index("Téléphone"); row_idx=None
-                for i, r in enumerate(values[1:], start=2):
-                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_pick:
-                        row_idx=i; break
-                if not row_idx:
-                    st.error("❌ لم يتم العثور على هذا العميل.")
-                else:
-                    row_values = ws_emp.row_values(row_idx)
-                    ws_arc.append_row(row_values)
-                    ws_emp.delete_rows(row_idx)
-                    st.success("✅ تم نقل العميل إلى الأرشيف."); st.cache_data.clear(); st.rerun()
+                vals = ws_emp.get_all_values(); header = vals[0] if vals else []
+                tel_idx = header.index("Téléphone")
+                phone_pick = normalize_tn_phone(move_opt.split("—")[-1])
+                row_idx=None
+                for i,r in enumerate(vals[1:], start=2):
+                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick: row_idx=i; break
+                if not row_idx: st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
+                row_values = ws_emp.row_values(row_idx)
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                row_values = row_values[:len(EXPECTED_HEADERS)]
+                ws_arch.append_row(row_values); ws_emp.delete_rows(row_idx)
+                st.success("✅ تم النقل للأرشيف"); st.cache_data.clear(); st.rerun()
             except Exception as e:
-                st.error(f"❌ خطأ أثناء الأرشفة: {e}")
+                st.error(f"❌ خطأ: {e}")
 
-# =================== تبويبة الأرشيف ===================
-if tab_choice == "📦 أرشيف العملاء" and role == "موظف" and employee:
-    st.header(f"📦 أرشيف العملاء — {employee}")
-    emp_lock_ui(employee)
-    if not emp_unlocked(employee):
-        st.info("🔒 أدخل كلمة سرّ الموظف لعرض الأرشيف.")
-        st.stop()
-
-    archive_title = f"{ARCHIVE_PREFIX}{employee}"
-    ws_archive = ensure_ws(archive_title, EXPECTED_HEADERS)
-
-    # تحميل البيانات
-    rows = ws_archive.get_all_values()
-    df_archive = pd.DataFrame(rows[1:], columns=rows[0]) if len(rows) > 1 else pd.DataFrame(columns=EXPECTED_HEADERS)
-
-    # عرض الأرشيف
-    st.markdown("### 👥 العملاء المؤرشفين")
-    if df_archive.empty:
-        st.info("📭 لا يوجد عملاء مؤرشفين بعد.")
+    # استرجاع من الأرشيف إلى ورقة الموظف
+    if df_arch.empty:
+        st.caption("لا يوجد عملاء بالأرشيف للاسترجاع.")
     else:
-        st.dataframe(df_archive, use_container_width=True)
-
-    # استرجاع عميل من الأرشيف
-    if not df_archive.empty:
-        pick = st.selectbox("اختر عميل لإرجاعه إلى القائمة النشطة", df_archive["Nom & Prénom"])
-        if st.button("🔁 استرجاع العميل"):
+        restore_opt = st.selectbox("اختر عميل للاسترجاع", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_arch.iterrows()], key="restore_pick")
+        if st.button("♻️ استرجاع للورقة"):
             try:
-                row = df_archive[df_archive["Nom & Prénom"] == pick].iloc[0].tolist()
-                ws_main = get_spreadsheet().worksheet(employee)
-                ws_main.append_row(row)
-                idx = df_archive.index[df_archive["Nom & Prénom"] == pick][0] + 2  # +2 بسبب الهيدر
-                ws_archive.delete_rows(idx)
-                st.success(f"✅ تم استرجاع العميل {pick}")
-                st.cache_data.clear(); st.rerun()
+                sh = get_spreadsheet()
+                ws_emp = sh.worksheet(employee)
+                valsA = ws_arch.get_all_values(); headerA = valsA[0] if valsA else []
+                tel_idxA = headerA.index("Téléphone")
+                phone_pick = normalize_tn_phone(restore_opt.split("—")[-1])
+                row_idx=None
+                for i,r in enumerate(valsA[1:], start=2):
+                    if len(r)>tel_idxA and normalize_tn_phone(r[tel_idxA])==phone_pick: row_idx=i; break
+                if not row_idx: st.error("❌ لم يتم العثور عليه في الأرشيف."); st.stop()
+                row_values = ws_arch.row_values(row_idx)
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                row_values = row_values[:len(EXPECTED_HEADERS)]
+                ws_emp.append_row(row_values); ws_arch.delete_rows(row_idx)
+                st.success("✅ تم الاسترجاع"); st.cache_data.clear(); st.rerun()
             except Exception as e:
-                st.error(f"❌ خطأ أثناء الاسترجاع: {e}")
+                st.error(f"❌ خطأ: {e}")
 
-# =================== صفحة الأدمِن ===================
+# ============ صفحة الأدمِن ============
 if role=="أدمن":
     st.markdown("## 👑 لوحة الأدمِن")
     if not admin_unlocked():
