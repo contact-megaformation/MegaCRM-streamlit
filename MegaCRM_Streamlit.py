@@ -587,6 +587,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
         c3.metric("🚨 تنبيهات", f"{alerts_m}")
         c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+
         # حسب الموظّف
         st.markdown("#### 👨‍💼 حسب الموظّف (هذا الشهر)")
         grp_emp = (
@@ -600,7 +601,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         )
         grp_emp["% تسجيل"] = ((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
         st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
-       
+
         # حسب التكوين
         st.markdown("#### 📚 حسب التكوين (هذا الشهر)")
         grp_form = (
