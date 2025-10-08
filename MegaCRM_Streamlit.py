@@ -882,41 +882,41 @@ if role=="أدمن":
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ: {e}")
         # ================== 📦 تبويبة الأرشيف ==================
-if tab_choice == "📦 أرشيف العملاء" and role == "موظف" and employee:
-    st.header(f"📦 أرشيف العملاء — {employee}")
-    emp_lock_ui(employee)
-    if not emp_unlocked(employee):
-        st.info("🔒 أدخل كلمة سرّ الموظف لعرض الأرشيف.")
-        st.stop()
+        if tab_choice == "📦 أرشيف العملاء" and role == "موظف" and employee:
+            st.header(f"📦 أرشيف العملاء — {employee}")
+            emp_lock_ui(employee)
+        if not emp_unlocked(employee):
+            st.info("🔒 أدخل كلمة سرّ الموظف لعرض الأرشيف.")
+            st.stop()
 
-    archive_title = f"{ARCHIVE_PREFIX}{employee}"
-    ws_archive = ensure_ws(archive_title, EXPECTED_HEADERS)
+        archive_title = f"{ARCHIVE_PREFIX}{employee}"
+        ws_archive = ensure_ws(archive_title, EXPECTED_HEADERS)
 
     # تحميل البيانات
-    rows = ws_archive.get_all_values()
-    df_archive = pd.DataFrame(rows[1:], columns=rows[0]) if len(rows) > 1 else pd.DataFrame(columns=EXPECTED_HEADERS)
+        rows = ws_archive.get_all_values()
+        df_archive = pd.DataFrame(rows[1:], columns=rows[0]) if len(rows) > 1 else pd.DataFrame(columns=EXPECTED_HEADERS)
 
     # عرض الأرشيف
-    st.markdown("### 👥 العملاء المؤرشفين")
-    if df_archive.empty:
-        st.info("📭 لا يوجد عملاء مؤرشفين بعد.")
-    else:
-        st.dataframe(df_archive, use_container_width=True)
+        st.markdown("### 👥 العملاء المؤرشفين")
+        if df_archive.empty:
+            st.info("📭 لا يوجد عملاء مؤرشفين بعد.")
+        else:
+            st.dataframe(df_archive, use_container_width=True)
 
     # استرجاع عميل من الأرشيف
-    if not df_archive.empty:
-        pick = st.selectbox("اختر عميل لإرجاعه إلى القائمة النشطة", df_archive["Nom & Prénom"])
-        if st.button("🔁 استرجاع العميل"):
-            try:
-                row = df_archive[df_archive["Nom & Prénom"] == pick].iloc[0].tolist()
-                ws_main = get_spreadsheet().worksheet(employee)
-                ws_main.append_row(row)
-                idx = df_archive.index[df_archive["Nom & Prénom"] == pick][0] + 2
-                ws_archive.delete_rows(idx)
-                st.success(f"✅ تم استرجاع العميل {pick}")
-                st.cache_data.clear(); st.rerun()
-            except Exception as e:
-                st.error(f"❌ خطأ أثناء الاسترجاع: {e}")
+        if not df_archive.empty:
+            pick = st.selectbox("اختر عميل لإرجاعه إلى القائمة النشطة", df_archive["Nom & Prénom"])
+            if st.button("🔁 استرجاع العميل"):
+                try:
+                    row = df_archive[df_archive["Nom & Prénom"] == pick].iloc[0].tolist()
+                    ws_main = get_spreadsheet().worksheet(employee)
+                    ws_main.append_row(row)
+                    idx = df_archive.index[df_archive["Nom & Prénom"] == pick][0] + 2
+                    ws_archive.delete_rows(idx)
+                    st.success(f"✅ تم استرجاع العميل {pick}")
+                    st.cache_data.clear(); st.rerun()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء الاسترجاع: {e}")
 
 
         st.markdown("---"); st.subheader("📜 سجلّ نقل العملاء")
