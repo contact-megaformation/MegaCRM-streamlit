@@ -177,8 +177,10 @@ def fin_read_df(title: str, kind: str) -> pd.DataFrame:
     else:
         if "Montant" in df.columns:
             df["Montant"] = _to_num_series_any(df["Montant"])
-
+        # احذف الأعمدة المكرّرة إن وجدت (نحتفظ بالأول فقط)
+    df = df.loc[:, ~df.columns.duplicated()]
     return df
+
 
 def fin_append_row(title: str, row: dict, kind: str):
     cols = FIN_REV_COLUMNS if kind=="Revenus" else FIN_DEP_COLUMNS
@@ -461,7 +463,10 @@ if tab_choice=="مداخيل (MB/Bizerte)":
             else:
                 show_cols = ["__mois","Date","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste","Mode","Employé","Catégorie","Note"]
                 show_cols = [c for c in show_cols if c in prev_df.columns]
-                st.dataframe(prev_df[show_cols], use_container_width=True)
+                safe_prev = prev_df.copy()
+                safe_prev = safe_prev.loc[:, ~safe_prev.columns.duplicated()]  # نحذف الأعمدة المكررة
+                show_cols = [c for c in show_cols if c in safe_prev.columns]   # نتأكد الأعمدة موجودة
+                st.dataframe(safe_prev[show_cols], use_container_width=True)
                 paid_so_far_all = float(prev_df.get("Montant_Total", pd.Series(dtype=float)).sum())
                 last_reste = float(prev_df.get("Reste", pd.Series(dtype=float)).fillna(0).iloc[-1] if not prev_df.empty else 0.0)
             st.info(f"🔎 المجموع السابق: {paid_so_far_all:,.2f} — آخر Reste: {last_reste:,.2f}")
