@@ -422,37 +422,79 @@ if tab_choice=="مداخيل (MB/Bizerte)":
             if not client_default_emp: client_default_emp = selected_client_info["emp"]
 
             # عرض الدفعات السابقة لنفس العميل عبر كلّ الأشهر (مع التعامل في حال غياب عمود Note)
-            out=[]
-            # قلّلنا القراءات: نستعمل فقط الأوراق الموجودة فعلاً
-            sh_titles = [w.title for w in get_spreadsheet().worksheets()]
-            months_available = [m for m in FIN_MONTHS_FR if fin_month_title(m,"Revenus",branch) in sh_titles]
-            for m in months_available:
-                t=fin_month_title(m,"Revenus",branch)
-                try:
-                    dfm = fin_read_df(t,"Revenus")
-                except Exception:
-                    dfm = pd.DataFrame(columns=FIN_REV_COLUMNS)
-                if dfm.empty: continue
-                dfm = dfm.copy()
-                # عمود Note قد لا يكون موجودًا: نبني سلسلة فارغة بنفس الطول
-                note_series = dfm["Note"] if "Note" in dfm.columns else pd.Series([""]*len(dfm), index=dfm.index)
-                cond_lib = dfm.get("Libellé","").astype(str).str.strip().str.lower() == client_default_lib.strip().lower()
-                cond_phone = note_series.astype(str).str.contains(selected_client_info["tel"], na=False)
-                sub = dfm[cond_lib | cond_phone].copy()
-                if not sub.empty:
-                    sub["__mois"]=m; sub["__sheet_title"]=t; out.append(sub)
-            prev_df = pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=FIN_REV_COLUMNS+["__sheet_title","__mois"])
-            st.markdown("#### 💾 دفعات سابقة (كل الأشهر)")
-            if prev_df.empty:
-                st.caption("لا توجد دفعات مسجّلة.")
-                paid_so_far_all, last_reste = 0.0, 0.0
-            else:
-                show_cols = ["__mois","Date","Montant_Admin","Montant_Structure","Montant_PreInscription","Montant_Total","Reste","Mode","Employé","Catégorie","Note"]
-                show_cols = [c for c in show_cols if c in prev_df.columns]
-                st.dataframe(prev_df[show_cols], use_container_width=True)
-                paid_so_far_all = float(prev_df.get("Montant_Total",pd.Series(dtype=float)).sum())
-                last_reste = float(prev_df.get("Reste",pd.Series(dtype=float)).fillna(0).iloc[-1] if not prev_df.empty else 0.0)
-            st.info(f"🔎 المجموع السابق: {paid_so_far_all:,.2f} — آخر Reste: {last_reste:,.2f}")
+            # --- عرض الدفعات السابقة لنفس العميل عبر كلّ الأشهر (آمن مع تكرار عمود Note) ---
+        # --- عرض الدفعات السابقة لنفس العميل عبر كلّ الأشهر (آمن مع تكرار عمود Note) ---
+out = []
+
+# نقلّل القراءات: نستعمل فقط الأوراق الموجودة فعلاً
+sh_titles = [w.title for w in get_spreadsheet().worksheets()]
+months_available = [m for m in FIN_MONTHS_FR if fin_month_title(m, "Revenus", branch) in sh_titles]
+
+for m in months_available:
+    t = fin_month_title(m, "Revenus", branch)
+    try:
+        dfm = fin_read_df(t, "Revenus")
+    except Exception:
+        dfm = pd.DataFrame(columns=FIN_REV_COLUMNS)
+
+    if dfm.empty:
+        continue
+
+    dfm = dfm.copy()
+
+    # --- جهّز سلسلة الـ Note حتى لو العمود مكرر أو مش موجود ---
+    if "Note" in dfm.columns:
+        tmp = dfm["Note"]
+        # لو العمود مكرر، tmp يصير DataFrame -> ناخذ أول عمود فقط
+        if isinstance(tmp, pd.DataFrame):
+            note_series = tmp.iloc[:, 0].astype(str)
+        else:
+            note_series = tmp.astype(str)
+    else:
+        note_series = pd.Series([""] * len(dfm), index=dfm.index, dtype=str)
+
+    # --- شرط المطابقة: Libellé أو وجود رقم الهاتف داخل Note (بدون Regex) ---
+    lib_series = (
+        dfm["Libellé"].astype(str).str.strip().str.lower()
+        if "Libellé" in dfm.columns
+        else pd.Series([""] * len(dfm), index=dfm.index, dtype=str)
+    )
+    cond_lib = lib_series.eq(client_default_lib.strip().lower())
+    cond_phone = note_series.str.contains(selected_client_info["tel"], na=False, regex=False)
+
+    sub = dfm[cond_lib | cond_phone].copy()
+    if not sub.empty:
+        sub["__mois"] = m
+        sub["__sheet_title"] = t
+        out.append(sub)
+
+prev_df = (
+    pd.concat(out, ignore_index=True)
+    if out else pd.DataFrame(columns=FIN_REV_COLUMNS + ["__sheet_title", "__mois"])
+)
+
+st.markdown("#### 💾 دفعات سابقة (كل الأشهر)")
+if prev_df.empty:
+    st.caption("لا توجد دفعات مسجّلة.")
+    paid_so_far_all, last_reste = 0.0, 0.0
+else:
+    show_cols = [
+        "__mois", "Date", "Montant_Admin", "Montant_Structure",
+        "Montant_PreInscription", "Montant_Total", "Reste",
+        "Mode", "Employé", "Catégorie", "Note"
+    ]
+    show_cols = [c for c in show_cols if c in prev_df.columns]
+    st.dataframe(prev_df[show_cols], use_container_width=True)
+
+    paid_so_far_all = float(prev_df.get("Montant_Total", pd.Series(dtype=float)).sum())
+    # آخر reste متوفر
+    last_reste = float(
+        prev_df.get("Reste", pd.Series(dtype=float)).fillna(0).iloc[-1]
+        if not prev_df.empty else 0.0
+    )
+
+st.info(f"🔎 المجموع السابق: {paid_so_far_all:,.2f} — آخر Reste: {last_reste:,.2f}")
+
 
     with st.form("fin_add_row"):
         d1,d2,d3 = st.columns(3)
