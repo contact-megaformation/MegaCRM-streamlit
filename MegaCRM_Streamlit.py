@@ -826,6 +826,34 @@ if role=="موظف" and employee:
                     st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
+# --- 🗄️ أرشفة عميل ---
+st.markdown("### 🗄️ أرشفة عميل (غير مهتم)")
+df_src = df_emp.copy()
+if df_src.empty:
+    st.info("ما فماش عملاء لأرشفتهم.")
+else:
+    pick = st.selectbox("اختر العميل للأرشفة", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()], key="archive_pick")
+    tel_pick = normalize_tn_phone(pick.split("—")[-1])
+    if st.button("🗄️ أرشف العميل"):
+        try:
+            sh = get_spreadsheet()
+            ws_emp = sh.worksheet(employee)
+            ws_arc = ensure_ws(f"{ARCHIVE_PREFIX}{employee}", EXPECTED_HEADERS)
+            values = ws_emp.get_all_values(); header = values[0]
+            tel_idx = header.index("Téléphone"); row_idx=None
+            for i, r in enumerate(values[1:], start=2):
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_pick:
+                    row_idx=i; break
+            if not row_idx:
+                st.error("❌ لم يتم العثور على هذا العميل.")
+            else:
+                row_values = ws_emp.row_values(row_idx)
+                ws_arc.append_row(row_values)
+                ws_emp.delete_rows(row_idx)
+                st.success("✅ تم نقل العميل إلى الأرشيف."); st.cache_data.clear(); st.rerun()
+        except Exception as e:
+            st.error(f"❌ خطأ أثناء الأرشفة: {e}")
+                    
 
 # ================= Admin Page =================
 if role=="أدمن":
