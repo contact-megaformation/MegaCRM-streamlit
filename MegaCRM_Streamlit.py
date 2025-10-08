@@ -910,9 +910,9 @@ if role=="أدمن":
                     st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e: st.error(f"❌ خطأ: {e}")
         # ================== 📦 تبويبة الأرشيف ==================
-        if tab_choice == "📦 أرشيف العملاء" and role == "موظف" and employee:
-            st.header(f"📦 أرشيف العملاء — {employee}")
-            emp_lock_ui(employee)
+    if tab_choice == "📦 أرشيف العملاء" and role == "موظف" and employee:
+        st.header(f"📦 أرشيف العملاء — {employee}")
+        emp_lock_ui(employee)
         if not emp_unlocked(employee):
             st.info("🔒 أدخل كلمة سرّ الموظف لعرض الأرشيف.")
             st.stop()
