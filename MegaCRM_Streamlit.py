@@ -587,6 +587,40 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
         c3.metric("🚨 تنبيهات", f"{alerts_m}")
         c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+        def apply_crm_search(df: pd.DataFrame, query: str) -> pd.DataFrame:
+    """بحث مرن بالهاتف (جزئي/كامل) + الاسم + التكوين."""
+    if df is None or df.empty or not str(query).strip():
+        return df
+
+    q = str(query).strip()
+    q_lower = q.lower()
+    digits = "".join(ch for ch in q if ch.isdigit())
+
+    df = df.copy()
+
+    # تأمين الأعمدة
+    if "Nom & Prénom" not in df.columns:
+        df["Nom & Prénom"] = ""
+    if "Téléphone" not in df.columns:
+        df["Téléphone"] = ""
+    if "Formation" not in df.columns:
+        df["Formation"] = ""
+
+    if "Téléphone_norm" not in df.columns:
+        df["Téléphone_norm"] = df["Téléphone"].apply(normalize_tn_phone)
+
+    mask = pd.Series(False, index=df.index)
+
+    # بالاسم + التكوين
+    mask |= df["Nom & Prénom"].astype(str).str.lower().str.contains(q_lower, na=False)
+    mask |= df["Formation"].astype(str).str.lower().str.contains(q_lower, na=False)
+
+    # بالهاتف (جزئي/كامل)
+    if digits:
+        mask |= df["Téléphone"].astype(str).str.contains(digits, na=False)
+        mask |= df["Téléphone_norm"].astype(str).str.contains(digits, na=False)
+
+    return df[mask]
 
         # حسب الموظّف
         st.markdown("#### 👨‍💼 حسب الموظّف (هذا الشهر)")
