@@ -834,7 +834,8 @@ if role == "أدمن":
             if st.button("📥 أضف"):
                 try:
                     if not (nom_a and tel_a_raw and formation_a و target_emp):
-                        st.error("❌ حقول ناقصة."); st.stop()
+                        st.error("❌ حقول ناقصة.")
+                        st.stop()
                     tel_a = normalize_tn_phone(tel_a_raw)
                     if tel_a in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود.")
                     else:
