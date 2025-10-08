@@ -1,10 +1,11 @@
-# MegaCRM_Streamlit_App.py — CRM كامل + دفعات العميل للموظّف (مع رؤية الفينانس للأدمِن فقط)
+# MegaCRM_Streamlit_App.py — CRM كامل + دفعات العميل (للموظّف) + فينانس للكلّ والملخّص الشهري للأدمِن فقط
 # =================================================================================================
-# 👇 المزايا
-# - CRM: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث برقم الهاتف، ملاحظات/Tag، تعديل، إضافة، نقل
-# - الأدمِن فقط: تبويب "مداخيل (MB/Bizerte)" + ملخصات شهريّة
+# - CRM: موظفين (قفل بكلمة سر)، قائمة العملاء، بحث عام برقم الهاتف، ملاحظات/Tag، تعديل، إضافة، نقل
+# - تبويب "مداخيل (MB/Bizerte)": يظهر للموظّف و الأدمِن
+#     * الموظّف يشوف/يسجّل العمليات كالمعتاد
+#     * الملخّص الشهري التفصيلي داخل التبويب يظهر للأدمِن فقط
+# - لوحة إحصائيات متقدّمة: إجمالي + شهري (اختيار شهر) + حسب الموظّف + حسب التكوين
 # - الموظّف: داخل لوحة الموظّف تظهر "💳 دفعات العميل" (عرض كل الدفعات عبر السنة MB/BZ + تسجيل دفعة جديدة)
-# - تنظيف وتوحيد التواريخ/الأرقام وتقليل النداءات على Google Sheets
 
 import json
 import streamlit as st
@@ -110,7 +111,6 @@ def fin_ensure_ws(sheet_id: str, title: str, columns: list[str]):
     except Exception:
         ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
         ws.update("1:1", [columns]); return ws
-    # ما نحدّثش الهيدر كل مرّة باش ما نضربش الكوتا
     vals = ws.get_all_values()
     if not vals:
         ws.update("1:1", [columns])
@@ -222,14 +222,8 @@ try:
 except Exception:
     pass
 
-# الأدوار
 role = st.sidebar.radio("الدور", ["موظف", "أدمن"], horizontal=True)
-
-# تبويبات: الفينانس يظهر للأدمِن فقط
-tabs = ["CRM"]
-if role == "أدمن":
-    tabs.append("مداخيل (MB/Bizerte)")
-tab_choice = st.sidebar.radio("📑 اختر تبويب:", tabs, index=0)
+tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "مداخيل (MB/Bizerte)"], index=0)
 
 employee = None
 if role == "موظف":
@@ -261,11 +255,8 @@ def admin_lock_ui():
 
 if role == "أدمن": admin_lock_ui()
 
-# ============================ تبويب الفينانس (Admin Only) ============================
+# ============================ تبويب الفينانس (للجميع، والملخّص للأدمِن فقط) ============================
 if tab_choice == "مداخيل (MB/Bizerte)":
-    if not admin_unlocked():
-        st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح تبويب الفينانس."); st.stop()
-
     st.title("💸 المداخيل والمصاريف — (منزل بورقيبة & بنزرت)")
     with st.sidebar:
         st.markdown("---")
@@ -301,45 +292,45 @@ if tab_choice == "مداخيل (MB/Bizerte)":
         cols_show = [c for c in ["Date","Libellé","Montant","Caisse_Source","Mode","Employé","Catégorie","Note"] if c in df_view.columns]
     st.dataframe(df_view[cols_show] if not df_view.empty else pd.DataFrame(columns=cols_show), use_container_width=True)
 
-    with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف)"):
-        rev_df = fin_read_df(fin_month_title(mois, "Revenus", branch), "Revenus")
-        dep_df = fin_read_df(fin_month_title(mois, "Dépenses", branch), "Dépenses")
+    # 👇 هذا الملخّص يظهر للأدمِن فقط
+    if role == "أدمن" and admin_unlocked():
+        with st.expander("📊 ملخّص الفرع للشهر (حسب الصنف) — Admin Only"):
+            rev_df = fin_read_df(fin_month_title(mois, "Revenus", branch), "Revenus")
+            dep_df = fin_read_df(fin_month_title(mois, "Dépenses", branch), "Dépenses")
 
-        sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
-        sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
-        sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
-        sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
-        sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
+            sum_admin    = rev_df["Montant_Admin"].sum()           if ("Montant_Admin" in rev_df.columns and not rev_df.empty) else 0.0
+            sum_struct   = rev_df["Montant_Structure"].sum()       if ("Montant_Structure" in rev_df.columns and not rev_df.empty) else 0.0
+            sum_preins   = rev_df["Montant_PreInscription"].sum()  if ("Montant_PreInscription" in rev_df.columns and not rev_df.empty) else 0.0
+            sum_total_as = rev_df["Montant_Total"].sum()           if ("Montant_Total" in rev_df.columns and not rev_df.empty) else (sum_admin + sum_struct)
+            sum_reste_due= rev_df["Reste"].sum()                   if ("Reste" in rev_df.columns and not rev_df.empty) else 0.0
 
-        if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
-            dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin",        "Montant"].sum()
-            dep_struct = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure",    "Montant"].sum()
-            dep_inscr  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Inscription",  "Montant"].sum()
-        else:
-            dep_admin = dep_struct = dep_inscr = 0.0
+            if not dep_df.empty and "Caisse_Source" in dep_df.columns and "Montant" in dep_df.columns:
+                dep_admin  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin",        "Montant"].sum()
+                dep_struct = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure",    "Montant"].sum()
+                dep_inscr  = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Inscription",  "Montant"].sum()
+            else:
+                dep_admin = dep_struct = dep_inscr = 0.0
 
-        reste_admin    = float(sum_admin)  - float(dep_admin)
-        reste_struct   = float(sum_struct) - float(dep_struct)
-        reste_inscr    = float(sum_preins) - float(dep_inscr)
+            reste_admin    = float(sum_admin)  - float(dep_admin)
+            reste_struct   = float(sum_struct) - float(dep_struct)
+            reste_inscr    = float(sum_preins) - float(dep_inscr)
 
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Admin — مداخيل", f"{sum_admin:,.2f}")
-        with c2: st.metric("Admin — مصاريف", f"{dep_admin:,.2f}")
-        with c3: st.metric("Admin — Reste", f"{reste_admin:,.2f}")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Admin — مداخيل", f"{sum_admin:,.2f}")
+            with c2: st.metric("Admin — مصاريف", f"{dep_admin:,.2f}")
+            with c3: st.metric("Admin — Reste", f"{reste_admin:,.2f}")
 
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Structure — مداخيل", f"{sum_struct:,.2f}")
-        with c2: st.metric("Structure — مصاريف", f"{dep_struct:,.2f}")
-        with c3: st.metric("Structure — Reste", f"{reste_struct:,.2f}")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Structure — مداخيل", f"{sum_struct:,.2f}")
+            with c2: st.metric("Structure — مصاريف", f"{dep_struct:,.2f}")
+            with c3: st.metric("Structure — Reste", f"{reste_struct:,.2f}")
 
-        c1, c2, c3 = st.columns(3)
-        with c1: st.metric("Inscription — مداخيل", f"{sum_preins:,.2f}")
-        with c2: st.metric("Inscription — مصاريف", f"{dep_inscr:,.2f}")
-        with c3: st.metric("Inscription — Reste", f"{reste_inscr:,.2f}")
+            c1, c2, c3 = st.columns(3)
+            with c1: st.metric("Inscription — مداخيل", f"{sum_preins:,.2f}")
+            with c2: st.metric("Inscription — مصاريف", f"{dep_inscr:,.2f}")
+            with c3: st.metric("Inscription — Reste", f"{reste_inscr:,.2f}")
 
-        st.info(f"Total Admin+Structure (مداخيل): {sum_total_as:,.2f} | إجمالي المتبقّي بالدروس (Reste Due): {sum_reste_due:,.2f}")
-
-    st.stop()
+            st.info(f"Total Admin+Structure (مداخيل): {sum_total_as:,.2f} | إجمالي المتبقّي بالدروس (Reste Due): {sum_reste_due:,.2f}")
 
 # ============================ إعداد df_all المشتقّ ============================
 df_all = df_all.copy()
@@ -392,6 +383,56 @@ else:
     with c4: st.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
     with c5: st.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
+# ======= 📅 إحصائيات شهرية (اختيار شهر) + حسب الموظّف + حسب التكوين =======
+st.markdown("---")
+st.subheader("📅 إحصائيات شهرية (العملاء)")
+if not df_all.empty and "DateAjout_dt" in df_all.columns:
+    df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
+    months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
+    month_pick = st.selectbox("اختر شهر", months_avail, index=0 if months_avail else None, key="stats_month_pick")
+    if month_pick:
+        month_mask = (df_all["DateAjout_dt"].dt.strftime("%Y-%m") == month_pick)
+        df_month = df_all[month_mask].copy()
+
+        total_clients_m = len(df_month)
+        total_inscrits_m = int((df_month["Inscription_norm"] == "oui").sum())
+        alerts_m = int(df_month["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum())
+        rate_m = round((total_inscrits_m / total_clients_m) * 100, 2) if total_clients_m else 0.0
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("👥 عملاء هذا الشهر", f"{total_clients_m}")
+        c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
+        c3.metric("🚨 تنبيهات", f"{alerts_m}")
+        c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+
+        st.markdown("#### 👨‍💼 حسب الموظّف (هذا الشهر)")
+        grp_emp = (
+            df_month.groupby("__sheet_name", dropna=False)
+            .agg(
+                Clients=("Nom & Prénom","count"),
+                Inscrits=("Inscription_norm", lambda x: (x=="oui").sum()),
+                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip()!="").sum()),
+            )
+            .reset_index().rename(columns={"__sheet_name":"الموظف"})
+        )
+        grp_emp["% تسجيل"] = ((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
+        st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
+
+        st.markdown("#### 📚 حسب التكوين (هذا الشهر)")
+        grp_form = (
+            df_month.groupby("Formation", dropna=False)
+            .agg(
+                Clients=("Nom & Prénom","count"),
+                Inscrits=("Inscription_norm", lambda x: (x=="oui").sum()),
+            )
+            .reset_index().rename(columns={"Formation":"التكوين"})
+        )
+        grp_form["% تسجيل"] = ((grp_form["Inscrits"]/grp_form["Clients"]).replace([float("inf"), float("nan")],0)*100).round(2)
+        st.dataframe(grp_form.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
+else:
+    st.caption("لا توجد بيانات كافية لإظهار الإحصائيات الشهرية.")
+
+# ============================ بحث عام برقم الهاتف ============================
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)", key="global_phone_all")
 if global_phone.strip():
@@ -479,7 +520,7 @@ if role == "موظف" and employee:
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
-    # ==== تعديل بيانات عميل (يجلب المعطيات تلقائيًا) ====
+    # ==== تعديل بيانات عميل + يجلب المعطيات تلقائيًا ====
     if not df_emp.empty:
         st.markdown("### ✏️ تعديل بيانات عميل")
         df_emp_edit = df_emp.copy()
@@ -558,7 +599,6 @@ if role == "موظف" and employee:
         # ==== 💳 دفعات العميل (عرض + إضافة جديدة) ====
         st.markdown("### 💳 دفعات هذا العميل")
         if cur_row is not None:
-            # نكوّن Libellé القياسي
             lib_suggest = f"Paiement {cur_row['Formation']} - {cur_row['Nom & Prénom']}".strip()
             st.caption(f"Libellé المقترح: **{lib_suggest}**")
             prev_df = read_payments_across_year_for_libelle(lib_suggest)
@@ -593,7 +633,6 @@ if role == "موظف" and employee:
                 categorie = st.text_input("Catégorie", value="Revenus")
                 note = st.text_area("Note", value=f"Client: {cur_row['Nom & Prénom']} / {cur_row['Formation']}")
 
-                # حساب Reste بالاعتماد على المدفوعات الحالية في نفس الشهر ونفس libellé
                 current_title = fin_month_title(mois_pick, "Revenus", branch_pick)
                 df_month = fin_read_df(current_title, "Revenus")
                 montant_total = float(montant_admin) + float(montant_struct)
@@ -631,8 +670,7 @@ if role == "موظف" and employee:
                         )
                         st.success("تمّ الحفظ ✅"); st.cache_data.clear()
 
-    # ملاحظات سريعة + تلوين + إضافة عميل + نقل (تبقى كما هي في نسختك السابقة)
-    # -------- باقي الأدوات المختصرة --------
+    # ===== أدوات سريعة: ملاحظة + تلوين + إضافة عميل + نقل =====
     if not df_emp.empty:
         st.markdown("### 📝 أضف ملاحظة (سريعة)")
         scope_df = filtered_df if not filtered_df.empty else df_emp
@@ -795,7 +833,7 @@ if role == "أدمن":
             suivi_date_a = st.date_input("تاريخ المتابعة", value=date.today(), key="admin_dt_suivi")
             if st.button("📥 أضف"):
                 try:
-                    if not (nom_a and tel_a_raw and formation_a and target_emp): st.error("❌ حقول ناقصة."); st.stop()
+                    if not (nom_a and tel_a_raw and formation_a و target_emp): st.error("❌ حقول ناقصة."); st.stop()
                     tel_a = normalize_tn_phone(tel_a_raw)
                     if tel_a in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود.")
                     else:
