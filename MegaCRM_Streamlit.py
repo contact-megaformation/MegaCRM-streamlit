@@ -1,3 +1,7 @@
+
+
+
+
 # MegaCRM_Streamlit.py
 # CRM + Finance (MB/Bizerte) — نسخة مُحسّنة مع Backoff/Cache + تبويبة الأرشيف
 
@@ -290,26 +294,30 @@ def emp_unlocked(emp_name:str)->bool:
     ts = st.session_state.get(f"emp_ok_at::{emp_name}")
     return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=15))
 
-def emp_lock_ui(emp_name: str):
+def emp_lock_ui(emp_name: str, ns: str = ""):
+    # نعمل namespace ثابت من اسم الموظف + المكان (tab/section)
+    ns_prefix = f"{emp_name}::{ns}" if ns else emp_name
+
     with st.expander(f"🔐 حماية ورقة الموظّف: {emp_name}", expanded=not emp_unlocked(emp_name)):
         if emp_unlocked(emp_name):
             c1, c2 = st.columns(2)
             c1.success("مفتوح (15 دقيقة).")
-            # ↓↓↓ مفتاح مميّز للزر باش ما يتصادمش لو الدالة تتنادى أكثر من مرّة
-            if c2.button("قفل الآن", key=f"emp_close_now::{emp_name}"):
+            # زر القفل بمفتاح فريد يتضمن الـ namespace
+            if c2.button("قفل الآن", key=f"btn_close::{ns_prefix}"):
                 st.session_state[f"emp_ok::{emp_name}"] = False
                 st.session_state[f"emp_ok_at::{emp_name}"] = None
         else:
-            # ↓↓↓ مفتاح مميّز لحقل كلمة السرّ
-            pwd_try = st.text_input("أدخل كلمة السرّ", type="password", key=f"emp_pwd::{emp_name}")
-            # ↓↓↓ مفتاح مميّز لزرّ الفتح
-            if st.button("فتح", key=f"emp_open_now::{emp_name}"):
+            # حقـل الباس بمفتاح فريد
+            pwd_try = st.text_input("أدخل كلمة السرّ", type="password", key=f"pwd::{ns_prefix}")
+            # زر الفتح بمفتاح فريد
+            if st.button("فتح", key=f"btn_open::{ns_prefix}"):
                 if pwd_try == emp_pwd_for(emp_name):
                     st.session_state[f"emp_ok::{emp_name}"] = True
                     st.session_state[f"emp_ok_at::{emp_name}"] = datetime.now()
                     st.success("تم الفتح لمدة 15 دقيقة.")
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
+
 # =================== مشتقات عامة ===================
 df_all = df_all.copy()
 if not df_all.empty:
