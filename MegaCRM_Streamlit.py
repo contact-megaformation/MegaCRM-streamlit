@@ -1,7 +1,3 @@
-
-
-
-
 # MegaCRM_Streamlit.py
 # CRM + Finance (MB/Bizerte) — نسخة مُحسّنة مع Backoff/Cache + تبويبة الأرشيف
 
@@ -294,7 +290,7 @@ def emp_unlocked(emp_name:str)->bool:
     ts = st.session_state.get(f"emp_ok_at::{emp_name}")
     return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=15))
 
-def emp_lock_ui(emp_name: str, ns: str = ""):
+def emp_lock_ui(emp_name: str, ns: str = "crm"):
     # نعمل namespace ثابت من اسم الموظف + المكان (tab/section)
     ns_prefix = f"{emp_name}::{ns}" if ns else emp_name
 
