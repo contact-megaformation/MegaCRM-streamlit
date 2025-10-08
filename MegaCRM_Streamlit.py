@@ -833,7 +833,8 @@ if role == "أدمن":
             suivi_date_a = st.date_input("تاريخ المتابعة", value=date.today(), key="admin_dt_suivi")
             if st.button("📥 أضف"):
                 try:
-                    if not (nom_a and tel_a_raw and formation_a و target_emp): st.error("❌ حقول ناقصة."); st.stop()
+                    if not (nom_a and tel_a_raw and formation_a و target_emp):
+                        st.error("❌ حقول ناقصة."); st.stop()
                     tel_a = normalize_tn_phone(tel_a_raw)
                     if tel_a in set(df_all["Téléphone_norm"]): st.warning("⚠️ الرقم موجود.")
                     else:
