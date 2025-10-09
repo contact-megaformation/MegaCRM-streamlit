@@ -395,6 +395,93 @@ if tab_choice=="مداخيل (MB/Bizerte)":
             x1.metric("Total Admin+Structure", f"{sum_total_as:,.2f}")
             x2.metric("Total مصاريف", f"{(dep_admin+dep_struct+dep_inscr):,.2f}")
             x3.metric("إجمالي Reste Due", f"{sum_reste_due:,.2f}")
+    # === ملخص يومي Admin/Structure (Admin Only) ===
+if role == "أدمن" and admin_unlocked():
+    with st.expander("📆 ملخّص يومي للفرع — Admin/Structure (Admin Only)", expanded=False):
+        # نقرى داتا الشهر للفرع المختار
+        rev_df = fin_read_df(fin_month_title(mois, "Revenus", branch), "Revenus")
+        dep_df = fin_read_df(fin_month_title(mois, "Dépenses", branch), "Dépenses")
+
+        # نضمن التواريخ أوبجكت
+        for dcol in ("Date",):
+            if dcol in rev_df.columns: rev_df[dcol] = pd.to_datetime(rev_df[dcol], errors="coerce")
+            if dcol in dep_df.columns: dep_df[dcol] = pd.to_datetime(dep_df[dcol], errors="coerce")
+
+        # نضمن الأرقام
+        def _num(s): 
+            return pd.to_numeric(pd.Series(s).astype(str).str.replace(" ","",regex=False).str.replace(",",".",regex=False), errors="coerce").fillna(0.0)
+
+        if not rev_df.empty:
+            if "Montant_Admin" in rev_df:  rev_df["Montant_Admin"]  = _num(rev_df["Montant_Admin"])
+            if "Montant_Structure" in rev_df: rev_df["Montant_Structure"] = _num(rev_df["Montant_Structure"])
+        if not dep_df.empty and "Montant" in dep_df:
+            dep_df["Montant"] = _num(dep_df["Montant"])
+
+        # تجميع مداخيل حسب اليوم
+        rev_day = pd.DataFrame(index=pd.to_datetime([]))
+        if not rev_df.empty and "Date" in rev_df.columns:
+            grp_rev = rev_df.groupby(rev_df["Date"].dt.normalize()).agg(
+                Rev_Admin=("Montant_Admin", "sum"),
+                Rev_Structure=("Montant_Structure", "sum"),
+            )
+            rev_day = grp_rev
+
+        # تجميع مصاريف حسب اليوم، مفرّقة بالكاشية
+        dep_day = pd.DataFrame(index=pd.to_datetime([]))
+        if not dep_df.empty and "Date" in dep_df.columns and "Caisse_Source" in dep_df.columns:
+            dep_admin_day = dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Admin"].groupby(dep_df["Date"].dt.normalize())["Montant"].sum().rename("Dep_Admin")
+            dep_struct_day= dep_df.loc[dep_df["Caisse_Source"]=="Caisse_Structure"].groupby(dep_df["Date"].dt.normalize())["Montant"].sum().rename("Dep_Structure")
+            dep_day = pd.concat([dep_admin_day, dep_struct_day], axis=1)
+
+        # نحضّر روزنامة الشهر (من 1 إلى آخر يوم) باش نضمن أيام بدون عمليات
+        # نحدّد سنة/شهر من اسم الشهر الفرنسي المختار
+        mois_idx = FIN_MONTHS_FR.index(mois) + 1
+        today_year = datetime.now().year  # ينجم يكون نفس السنة؛ غيّر حسب حاجتك لو عندك archive سنين
+        start = pd.Timestamp(today_year, mois_idx, 1)
+        end = (start + pd.offsets.MonthEnd(1))
+        full_range = pd.date_range(start, end, freq="D")
+
+        # ندمج المداخيل والمصاريف على الرينج الكلّ
+        daily = pd.DataFrame(index=full_range)
+        if not rev_day.empty: daily = daily.join(rev_day, how="left")
+        if not dep_day.empty: daily = daily.join(dep_day, how="left")
+
+        # نعوّض NaN بصفر
+        for c in ["Rev_Admin","Rev_Structure","Dep_Admin","Dep_Structure"]:
+            if c not in daily.columns: daily[c] = 0.0
+            daily[c] = daily[c].fillna(0.0)
+
+        # الباقي اليومي = مداخيل اليوم - مصاريف اليوم
+        daily["Reste_Admin_Journalier"]     = daily["Rev_Admin"]     - daily["Dep_Admin"]
+        daily["Reste_Structure_Journalier"] = daily["Rev_Structure"] - daily["Dep_Structure"]
+
+        # الباقي التراكمي = مجموع (مداخيل - مصاريف) من بداية الشهر
+        daily["Reste_Admin_Cumulé"]     = (daily["Rev_Admin"]     - daily["Dep_Admin"]).cumsum()
+        daily["Reste_Structure_Cumulé"] = (daily["Rev_Structure"] - daily["Dep_Structure"]).cumsum()
+
+        # تنسيق العرض
+        daily = daily.reset_index().rename(columns={"index":"Date"})
+        cols_order = [
+            "Date",
+            "Rev_Admin","Dep_Admin","Reste_Admin_Journalier","Reste_Admin_Cumulé",
+            "Rev_Structure","Dep_Structure","Reste_Structure_Journalier","Reste_Structure_Cumulé",
+        ]
+        daily = daily[cols_order]
+
+        # عرض جدول نظيف
+        st.dataframe(
+            daily.style.format({
+                "Rev_Admin": "{:,.2f}", "Dep_Admin": "{:,.2f}",
+                "Reste_Admin_Journalier": "{:,.2f}", "Reste_Admin_Cumulé": "{:,.2f}",
+                "Rev_Structure": "{:,.2f}", "Dep_Structure": "{:,.2f}",
+                "Reste_Structure_Journalier": "{:,.2f}", "Reste_Structure_Cumulé": "{:,.2f}",
+            }),
+            use_container_width=True
+        )
+
+        # تنزيل CSV
+        csv_bytes = daily.to_csv(index=False).encode("utf-8-sig")
+        st.download_button("⬇️ تنزيل CSV (اليومي Admin/Structure)", data=csv_bytes, file_name=f"daily_summary_{branch}_{mois}.csv", mime="text/csv")
 
     # ---- إضافة عملية جديدة + ربط بعميل ----
     st.markdown("---"); st.subheader("➕ إضافة عملية جديدة")
