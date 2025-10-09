@@ -661,59 +661,7 @@ if role=="موظف" and employee:
         alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip()!=""]
         st.markdown("### 🚨 عملاء مع تنبيهات")
         render_table(alerts_df)
-    # ================== ➕ أضف عميل جديد (للموظّف) ==================
-st.markdown("### ➕ أضف عميل جديد")
-with st.form(f"emp_add_client_form::{employee}"):
-    col1, col2 = st.columns(2)
-    with col1:
-        nom_emp   = st.text_input("👤 الاسم و اللقب", key=f"emp_add_nom::{employee}")
-        tel_emp   = st.text_input("📞 رقم الهاتف", key=f"emp_add_tel::{employee}")
-        formation_emp = st.text_input("📚 التكوين", key=f"emp_add_form::{employee}")
-        inscription_emp = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], key=f"emp_add_insc::{employee}")
-    with col2:
-        type_contact_emp = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key=f"emp_add_type::{employee}")
-        date_ajout_emp   = st.date_input("🕓 تاريخ الإضافة", value=date.today(), key=f"emp_add_dt_add::{employee}")
-        date_suivi_emp   = st.date_input("📆 تاريخ المتابعة", value=date.today(), key=f"emp_add_dt_suivi::{employee}")
 
-    submitted_add_emp = st.form_submit_button("📥 أضف العميل")
-
-if submitted_add_emp:
-    try:
-        # تحضير القيم
-        tel_norm = normalize_tn_phone(tel_emp)
-        if not (nom_emp and tel_norm and formation_emp):
-            st.error("❌ حقول أساسية ناقصة (الاسم، الهاتف، التكوين).")
-        elif tel_norm in ALL_PHONES:
-            st.warning("⚠️ الرقم موجود مسبقًا في قاعدة البيانات.")
-        else:
-            insc_val = "Oui" if inscription_emp == "Inscrit" else "Pas encore"
-            row_to_append = [
-                nom_emp.strip(),
-                tel_norm,
-                type_contact_emp,
-                formation_emp.strip(),
-                "",  # Remarque
-                fmt_date(date_ajout_emp),
-                fmt_date(date_suivi_emp),
-                "",  # Alerte
-                insc_val,
-                employee,  # Employe = اسم ورقة الموظّف الحالي
-                ""  # Tag
-            ]
-
-            # تأكد من وجود الورقة و الهيدر
-            sh = get_spreadsheet()
-            ws_emp = sh.worksheet(employee)
-            header = ws_emp.row_values(1) or []
-            if not header or header[:len(EXPECTED_HEADERS)] != EXPECTED_HEADERS:
-                ws_emp.update("1:1", [EXPECTED_HEADERS])
-
-            ws_emp.append_row(row_to_append)
-            st.success("✅ تم إضافة العميل بنجاح.")
-            st.cache_data.clear()
-            st.rerun()
-    except Exception as e:
-        st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
     # تعديل عميل
         st.markdown("### ✏️ تعديل بيانات عميل")
@@ -748,7 +696,7 @@ if submitted_add_emp:
                     row_idx=None
                     for i,r in enumerate(values[1:], start=2):
                         if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==chosen_phone: row_idx=i; break
-                    if not row_idx: st.error("❌ تعذّر إيجاد الصف."); st.stop()
+                    if not row_idx:st.error("❌ تعذّر إيجاد الصف."); st.stop()
                     col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
                     new_phone_norm = normalize_tn_phone(new_phone_raw)
                     if not new_name.strip(): st.error("❌ الاسم مطلوب."); st.stop()
