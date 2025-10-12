@@ -36,27 +36,6 @@ with st.sidebar:
             """,
             unsafe_allow_html=True
         )
-# زر مركزي لفتح بوابة المكوّنين (يفتح في تبويب جديد)
-st.markdown(
-    """
-    <div style="text-align:center; margin:16px 0;">
-      <a href="https://mega-formateur.streamlit.app/" target="_blank"
-         style="
-            display:inline-block;
-            background: linear-gradient(90deg,#0066cc,#00aaff);
-            color:#fff;
-            padding:12px 22px;
-            border-radius:10px;
-            text-decoration:none;
-            font-weight:600;
-            box-shadow: 0 4px 10px rgba(0,0,0,0.12);
-         ">
-         🔀 فتح بوابة المكوّنين
-      </a>
-    </div>
-    """,
-    unsafe_allow_html=True
-)
 
 # ============ Google Auth ============
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
