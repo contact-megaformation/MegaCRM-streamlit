@@ -36,6 +36,11 @@ with st.sidebar:
             """,
             unsafe_allow_html=True
         )
+        # 🔗 زر إضافي لبوابة المكوّنين
+    st.markdown("---")
+    st.markdown("### 👨‍🏫 بوابة المكوّنين")
+    if st.button("🔀 فتح Mega Formateur"):
+        st.markdown("[افتح بوابة المكوّنين](https://mega-formateur.streamlit.app/)", unsafe_allow_html=True)
 
 # ============ Google Auth ============
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
