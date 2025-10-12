@@ -24,23 +24,52 @@ st.markdown(
 # زرّ يفتح MegaPay (بدل تبويبة المداخيل/المصاريف)
 with st.sidebar:
     st.markdown("### 💵 إدارة المداخيل والمصاريف")
-    try:
-        st.link_button("🚀 فتح MegaPay", "https://megapay.streamlit.app/")
-    except Exception:
-        st.markdown(
-            """
-            <a href="https://megapay.streamlit.app/" target="_blank"
-               style="display:inline-block;background:#2b9348;color:#fff;padding:8px 14px;border-radius:8px;text-decoration:none;">
-               🚀 فتح MegaPay
-            </a>
-            """,
-            unsafe_allow_html=True
-        )
-        # 🔗 زر إضافي لبوابة المكوّنين
+    st.markdown(
+        """
+        <a href="https://megapay.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#16a085,#1abc9c);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+              ">
+              🚀 فتح MegaPay
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
+
     st.markdown("---")
+
     st.markdown("### 👨‍🏫 بوابة المكوّنين")
-    if st.button("🔀 فتح Mega Formateur"):
-        st.markdown("[افتح بوابة المكوّنين](https://mega-formateur.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown(
+        """
+        <a href="https://mega-formateur.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#0078d7,#00b7ff);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+              ">
+              🔀 فتح Mega Formateur
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ============ Google Auth ============
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
