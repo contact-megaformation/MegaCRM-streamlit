@@ -396,18 +396,19 @@ if role=="موظف" and employee:
         )
         st.dataframe(styled, use_container_width=True)
 
+        # ===== عرض قائمة العملاء =====
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
     # --- عرض العملاء الذين لديهم تنبيهات ---
-    if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+    if (not filtered_df.empty) and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
         _df_alerts = filtered_df.copy()
         _df_alerts["Alerte"] = _df_alerts.get("Alerte_view", "")
         alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip() != ""]
         st.markdown("### 🚨 عملاء مع تنبيهات")
         render_table(alerts_df)
 
-    # ================== ➕ أضف عميل جديد ==================
+    # ================== ➕ أضف عميل جديد (للموظّف) ==================
     st.markdown("### ➕ أضف عميل جديد")
     with st.form(f"emp_add_client_form::{employee}"):
         col1, col2 = st.columns(2)
@@ -456,6 +457,7 @@ if role=="موظف" and employee:
                 st.rerun()
         except Exception as e:
             st.error(f"❌ خطأ أثناء الإضافة: {e}")
+
 
     # ================== ✏️ تعديل عميل ==================
     st.markdown("### ✏️ تعديل بيانات عميل")
