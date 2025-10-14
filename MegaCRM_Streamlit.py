@@ -354,7 +354,63 @@ if global_phone.strip():
             use_container_width=True
         )
         st.markdown("---")
+# ====== فلترة حسب التكوين (ضعها حيث يناسبك — مثلاً بعد إحصائيات شهرية) ======
+st.markdown("---")
+st.subheader("🔎 فلترة حسب التكوين (Formation)")
 
+# اختياري: تقييد النطاق إلى شهر محدد قبل الفلترة
+if "DateAjout_dt" in df_all.columns:
+    df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
+    month_options = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
+else:
+    month_options = []
+
+sel_month = st.selectbox("اختر شهر (اختياري)", ["— كل الأشهر —"] + month_options, index=0)
+if sel_month and sel_month != "— كل الأشهر —":
+    df_for_filter = df_all[df_all["MonthStr"] == sel_month].copy()
+else:
+    df_for_filter = df_all.copy()
+
+# قائمة التكوينات المتاحة
+formations = sorted(df_for_filter["Formation"].fillna("غير محدد").unique())
+chosen_forms = st.multiselect("اختر/اختاري التكوينات", options=formations, default=formations)
+
+# تطبّق الفلتر
+if chosen_forms:
+    mask = df_for_filter["Formation"].fillna("غير محدد").isin(chosen_forms)
+    df_filtered = df_for_filter[mask].copy()
+else:
+    df_filtered = df_for_filter.copy()
+
+# ملخّص رقمي سريع
+total = len(df_filtered)
+inscrits = int((df_filtered["Inscription"].fillna("").str.lower()=="oui").sum()) if "Inscription" in df_filtered.columns else 0
+alerts = int(df_filtered.get("Alerte_view","").fillna("").astype(str).str.strip().ne("").sum())
+
+c1,c2,c3 = st.columns(3)
+c1.metric("👥 عملاء (المحدد)", f"{total}")
+c2.metric("✅ مسجّلون", f"{inscrits}")
+c3.metric("🚨 تنبيهات", f"{alerts}")
+
+# جدول مفصّل (يمكن تغييره إلى تجميع حسب موظّف/تاريخ)
+if not df_filtered.empty:
+    # عرض الجدول الرئيسي
+    cols_to_show = [c for c in ["Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Alerte_view","__sheet_name"] if c in df_filtered.columns]
+    st.dataframe(df_filtered[cols_to_show].rename(columns={"Alerte_view":"Alerte","__sheet_name":"الموظف"}), use_container_width=True)
+
+    # تجميع حسب الموظف
+    st.markdown("#### 👨‍💼 تجميع حسب الموظّف")
+    grp_emp = (
+        df_filtered.groupby("__sheet_name", dropna=False)
+        .agg(Clients=("Nom & Prénom","count"),
+             Inscrits=("Inscription", lambda x: (x.fillna("").str.lower()=="oui").sum()),
+             Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip()!="").sum()))
+        .reset_index().rename(columns={"__sheet_name":"الموظّف"})
+    )
+    grp_emp["% تسجيل"] = ((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"),float("nan")],0)*100).round(2)
+    st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
+else:
+    st.info("ما فمّاش نتائج للمحددات اللي اخترتهم.")
 # ============ تبويب CRM للموظّف ============
 if role=="موظف" and employee:
     emp_lock_ui(employee, ns="crm")
