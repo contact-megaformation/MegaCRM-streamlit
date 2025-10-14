@@ -1,6 +1,6 @@
 # MegaCRM_Streamlit.py
-# CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف — مع زرين يفتحوا MegaPay و Mega Formateur
-
+# CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف — مع أزرار تفتح MegaPay و Mega Formateur
+# + فلترة بالتكوين داخل لوحة الموظّف
 import json, urllib.parse, time
 import streamlit as st
 import pandas as pd
@@ -12,38 +12,64 @@ from PIL import Image
 
 # ============ إعداد الصفحة ============
 st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
-st.markdown("""
-<div style='text-align:center'>
-  <h1>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
-</div>
-<hr/>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div style='text-align:center'>
+      <h1>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
+    </div>
+    <hr/>
+    """, unsafe_allow_html=True
+)
 
-# ============ روابط جانبية ============
+# أزرار تفتح MegaPay و Mega Formateur
 with st.sidebar:
     st.markdown("### 💵 إدارة المداخيل والمصاريف")
-    st.markdown("""
-    <a href="https://megapay.streamlit.app/" target="_blank"
-       style="display:inline-block;background:linear-gradient(90deg,#16a085,#1abc9c);
-       color:#fff;padding:10px 18px;border-radius:10px;text-decoration:none;
-       font-weight:600;font-size:15px;text-align:center;width:100%;
-       box-shadow:0 4px 8px rgba(0,0,0,0.15);">
-       🚀 فتح MegaPay
-    </a>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <a href="https://megapay.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#16a085,#1abc9c);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🚀 فتح MegaPay
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.markdown("---")
 
     st.markdown("### 👨‍🏫 بوابة المكوّنين")
-    st.markdown("""
-    <a href="https://mega-formateur.streamlit.app/" target="_blank"
-       style="display:inline-block;background:linear-gradient(90deg,#0078d7,#00b7ff);
-       color:#fff;padding:10px 18px;border-radius:10px;text-decoration:none;
-       font-weight:600;font-size:15px;text-align:center;width:100%;
-       box-shadow:0 4px 8px rgba(0,0,0,0.15);">
-       🔀 فتح Mega Formateur
-    </a>
-    """, unsafe_allow_html=True)
+    st.markdown(
+        """
+        <a href="https://mega-formateur.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#0078d7,#00b7ff);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🔀 فتح Mega Formateur
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
 
 # ============ Google Auth ============
 SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
@@ -59,7 +85,8 @@ def make_client_and_sheet_id():
     except Exception:
         creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
         client = gspread.authorize(creds)
-        return client, "PUT_YOUR_SHEET_ID_HERE"
+        sheet_id = "PUT_YOUR_SHEET_ID_HERE"
+        return client, sheet_id
 
 client, SPREADSHEET_ID = make_client_and_sheet_id()
 
@@ -69,6 +96,7 @@ EXPECTED_HEADERS = [
     "Remarque","Date ajout","Date de suivi","Alerte",
     "Inscription","Employe","Tag"
 ]
+
 REASSIGN_LOG_SHEET   = "Reassign_Log"
 REASSIGN_LOG_HEADERS = ["timestamp","moved_by","src_employee","dst_employee","client_name","phone"]
 
@@ -101,7 +129,7 @@ def highlight_inscrit_row(row: pd.Series):
     insc = str(row.get("Inscription","")).strip().lower()
     return ['background-color:#d6f5e8' if insc in ("inscrit","oui") else '' for _ in row.index]
 
-# ============ Sheets Utils ============
+# ===================== Sheets Utils (Backoff + Cache) =====================
 def get_spreadsheet():
     if st.session_state.get("sh_id") == SPREADSHEET_ID and "sh_obj" in st.session_state:
         return st.session_state["sh_obj"]
@@ -115,9 +143,8 @@ def get_spreadsheet():
         except gse.APIError as e:
             last_err = e
             time.sleep(0.5 * (2**i))
-    st.error("❌ تعذّر فتح Google Sheet (قد تكون الكوتا تعدّت).")
-    if last_err: raise last_err
-    st.stop()
+    st.error("تعذر فتح Google Sheet (ربما الكوتا تعدّت).")
+    raise last_err
 
 def ensure_ws(title: str, columns: list[str]):
     sh = get_spreadsheet()
@@ -138,27 +165,26 @@ def load_all_data():
     sh = get_spreadsheet()
     all_dfs, all_emps = [], []
     for ws in sh.worksheets():
-        t = ws.title.strip()
-        if t.endswith("_PAIEMENTS") or t.startswith("_") or t == REASSIGN_LOG_SHEET:
-            continue
-        all_emps.append(t)
+        title = ws.title.strip()
+        if title.endswith("_PAIEMENTS"): continue
+        if title.startswith("_"): continue
+        if title in (REASSIGN_LOG_SHEET,): continue
+
+        all_emps.append(title)
         rows = ws.get_all_values()
         if not rows:
-            ws.update("1:1", [EXPECTED_HEADERS])
-            rows = ws.get_all_values()
-        data_rows = rows[1:] if len(rows) > 1 else []
+            ws.update("1:1",[EXPECTED_HEADERS]); rows = ws.get_all_values()
+        data_rows = rows[1:] if len(rows)>1 else []
         fixed = []
         for r in data_rows:
             r = list(r or [])
-            if len(r) < len(EXPECTED_HEADERS):
-                r += [""] * (len(EXPECTED_HEADERS) - len(r))
-            else:
-                r = r[:len(EXPECTED_HEADERS)]
+            if len(r)<len(EXPECTED_HEADERS): r += [""]*(len(EXPECTED_HEADERS)-len(r))
+            else: r = r[:len(EXPECTED_HEADERS)]
             fixed.append(r)
         df = pd.DataFrame(fixed, columns=EXPECTED_HEADERS)
-        df["__sheet_name"] = t
+        df["__sheet_name"] = title
         all_dfs.append(df)
-    big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS + ["__sheet_name"])
+    big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS+["__sheet_name"])
     return big, all_emps
 
 df_all, all_employes = load_all_data()
@@ -177,40 +203,35 @@ employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة G
 def admin_unlocked() -> bool:
     ok = st.session_state.get("admin_ok", False)
     ts = st.session_state.get("admin_ok_at")
-    return bool(ok and ts and (datetime.now()-ts) <= timedelta(minutes=30))
+    return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=30))
 
 def admin_lock_ui():
     with st.sidebar.expander("🔐 إدارة (Admin)", expanded=(role=="أدمن" and not admin_unlocked())):
         if admin_unlocked():
             if st.button("قفل صفحة الأدمِن"):
-                st.session_state["admin_ok"] = False
-                st.session_state["admin_ok_at"] = None
-                st.rerun()
+                st.session_state["admin_ok"]=False; st.session_state["admin_ok_at"]=None; st.rerun()
         else:
             admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password")
             if st.button("فتح صفحة الأدمِن"):
                 conf = str(st.secrets.get("admin_password","admin123"))
-                if admin_pwd and admin_pwd == conf:
-                    st.session_state["admin_ok"] = True
-                    st.session_state["admin_ok_at"] = datetime.now()
+                if admin_pwd and admin_pwd==conf:
+                    st.session_state["admin_ok"]=True; st.session_state["admin_ok_at"]=datetime.now()
                     st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
 
-if role == "أدمن":
-    admin_lock_ui()
+if role=="أدمن": admin_lock_ui()
 
-def emp_pwd_for(emp_name: str) -> str:
+def emp_pwd_for(emp_name:str)->str:
     try:
         mp = st.secrets["employee_passwords"]
-        return str(mp.get(emp_name, mp.get("_default", "1234")))
-    except Exception:
-        return "1234"
+        return str(mp.get(emp_name, mp.get("_default","1234")))
+    except Exception: return "1234"
 
-def emp_unlocked(emp_name: str) -> bool:
+def emp_unlocked(emp_name:str)->bool:
     ok = st.session_state.get(f"emp_ok::{emp_name}", False)
     ts = st.session_state.get(f"emp_ok_at::{emp_name}")
-    return bool(ok and ts and (datetime.now()-ts) <= timedelta(minutes=15))
+    return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=15))
 
 def emp_lock_ui(emp_name: str, ns: str = ""):
     ns_prefix = f"{emp_name}::{ns}" if ns else emp_name
@@ -252,10 +273,7 @@ if not df_all.empty:
     df_all.loc[inscrit_mask, "Date de suivi"] = ""
     df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
-    df_all["Alerte_view"] = ""
-    df_all["Mois"] = ""
-    df_all["Téléphone_norm"] = ""
-    ALL_PHONES = set()
+    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES=set()
 
 # ============ Dashboard سريع ============
 st.subheader("لوحة إحصائيات سريعة")
@@ -285,8 +303,7 @@ else:
     c5.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
 # ============ إحصائيات شهرية ============
-st.markdown("---")
-st.subheader("📅 إحصائيات شهرية (العملاء)")
+st.markdown("---"); st.subheader("📅 إحصائيات شهرية (العملاء)")
 if not df_all.empty and "DateAjout_dt" in df_all.columns:
     df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
@@ -307,7 +324,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
             df_month.groupby("__sheet_name", dropna=False)
             .agg(Clients=("Nom & Prénom","count"),
                  Inscrits=("Inscription_norm",lambda x:(x=="oui").sum()),
-                 Alerts=("Alerte_view",lambda x:(x.fillna('').astype(str).str.strip()!='').sum()))
+                 Alerts=("Alerte_view",lambda x:(x.fillna("").astype(str).str.strip()!="").sum()))
             .reset_index().rename(columns={"__sheet_name":"الموظف"})
         )
         grp_emp["% تسجيل"]=((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"),float("nan")],0)*100).round(2)
@@ -327,8 +344,8 @@ global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محل�
 if global_phone.strip():
     q = normalize_tn_phone(global_phone)
     sd = df_all.copy()
-    sd["Téléphone_norm"] = sd["Téléphone"].apply(normalize_tn_phone)
-    sd["Alerte"] = sd.get("Alerte_view","")
+    sd["Téléphone_norm"]=sd["Téléphone"].apply(normalize_tn_phone)
+    sd["Alerte"]=sd.get("Alerte_view","")
     sd = sd[sd["Téléphone_norm"]==q]
     if sd.empty:
         st.info("❕ ما لقيتش عميل بهذا الرقم.")
@@ -353,50 +370,40 @@ if role=="موظف" and employee:
         st.warning("⚠️ لا يوجد أي عملاء بعد.")
         st.stop()
 
+    # إعداد الشهر
     df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
     df_emp = df_emp.dropna(subset=["DateAjout_dt"])
     df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
     month_options = sorted(df_emp["Mois"].dropna().unique(), reverse=True)
     month_filter  = st.selectbox("🗓️ اختر شهر الإضافة", month_options)
-    filtered_df   = df_emp[df_emp["Mois"]==month_filter].copy()
 
-    # ===== فلترة التكوين (Formation) =====
-    if not filtered_df.empty:
-        formations_list = (
-            filtered_df["Formation"]
-            .fillna("")
-            .astype(str)
-            .str.strip()
-            .replace({"": "غير محدد"})
-            .unique()
-            .tolist()
+    filtered_df = df_emp[df_emp["Mois"]==month_filter].copy()
+
+    # ===== فلترة بالتكوين =====
+    st.markdown("#### 🔎 فلترة حسب التكوين")
+    if filtered_df.empty:
+        st.info("لا توجد بيانات لهذا الشهر.")
+    else:
+        formations = sorted(
+            [f for f in filtered_df["Formation"].fillna("").astype(str).str.strip().unique() if f]
         )
-        formations_list = sorted(formations_list)
-        chosen_forms = st.multiselect("🎓 اختر التكوين/ات", formations_list, default=formations_list)
-        if chosen_forms:
-            tmp = filtered_df.copy()
-            tmp["Formation_norm"] = tmp["Formation"].fillna("").astype(str).str.strip().replace({"": "غير محدد"})
-            tmp = tmp[tmp["Formation_norm"].isin(chosen_forms)]
-            tmp = tmp.drop(columns=["Formation_norm"])
-            filtered_df = tmp
-        else:
-            filtered_df = filtered_df.iloc[0:0]
+        form_choice = st.selectbox("اختر التكوين", ["(الكل)"] + formations, index=0)
+        if form_choice and form_choice != "(الكل)":
+            filtered_df = filtered_df[filtered_df["Formation"].astype(str).str.strip() == form_choice]
 
+    # ===== عرض قائمة العملاء =====
     def render_table(df_disp: pd.DataFrame):
         if df_disp.empty:
             st.info("لا توجد بيانات.")
             return
         _df = df_disp.copy()
-        _df["Alerte"] = _df.get("Alerte_view","")
-        styled = (
-            _df[[c for c in EXPECTED_HEADERS if c in _df.columns]]
-            .style.apply(highlight_inscrit_row, axis=1)
-            .applymap(mark_alert_cell, subset=["Alerte"])
-            .applymap(color_tag, subset=["Tag"])
-        )
+        _df["Alerte"]=_df.get("Alerte_view","")
+        styled = (_df[[c for c in EXPECTED_HEADERS if c in _df.columns]]
+                  .style.apply(highlight_inscrit_row, axis=1)
+                  .applymap(mark_alert_cell, subset=["Alerte"])
+                  .applymap(color_tag, subset=["Tag"]))
         st.dataframe(styled, use_container_width=True)
 
-        # ===== عرض قائمة العملاء =====
     st.markdown("### 📋 قائمة العملاء")
     render_table(filtered_df)
 
@@ -458,11 +465,10 @@ if role=="موظف" and employee:
         except Exception as e:
             st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-
     # ================== ✏️ تعديل عميل ==================
     st.markdown("### ✏️ تعديل بيانات عميل")
     df_emp_edit = df_emp.copy()
-    df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
+    df_emp_edit["Téléphone_norm"]=df_emp_edit["Téléphone"].apply(normalize_tn_phone)
     options = {
         f"[{i}] {r['Nom & Prénom']} — {format_display_phone(r['Téléphone_norm'])}": r["Téléphone_norm"]
         for i, r in df_emp_edit.iterrows() if str(r.get("Téléphone","")).strip()!=""
@@ -519,16 +525,14 @@ if role=="موظف" and employee:
                     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
                     appended = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {extra_note.strip()}"
                     ws.update_cell(row_idx, col_map["Remarque"], appended)
-                st.success("✅ تم حفظ التعديلات")
-                st.cache_data.clear()
+                st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
     # ================== ملاحظات سريعة + Tag ==================
     st.markdown("### 📝 ملاحظة سريعة")
     scope_df = filtered_df if not filtered_df.empty else df_emp
-    scope_df = scope_df.copy()
-    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+    scope_df = scope_df.copy(); scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
     tel_key = st.selectbox("اختر العميل", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()])
     tel_to_update = normalize_tn_phone(tel_key.split("—")[-1])
     quick_note = st.text_area("🗒️ النص")
@@ -548,8 +552,7 @@ if role=="موظف" and employee:
                 stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
                 updated = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {quick_note.strip()}"
                 ws.update_cell(row_idx, rem_col, updated)
-                st.success("✅ تمت الإضافة")
-                st.cache_data.clear()
+                st.success("✅ تمت الإضافة"); st.cache_data.clear()
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
@@ -571,8 +574,7 @@ if role=="موظف" and employee:
                 st.session_state["last_color"]=hex_color
                 color_col = EXPECTED_HEADERS.index("Tag")+1
                 ws.update_cell(row_idx, color_col, hex_color)
-                st.success("✅ تم التلوين")
-                st.cache_data.clear()
+                st.success("✅ تم التلوين"); st.cache_data.clear()
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
@@ -580,19 +582,16 @@ if role=="موظف" and employee:
     st.markdown("### 💬 تواصل WhatsApp")
     try:
         scope_for_wa = (filtered_df if not filtered_df.empty else df_emp).copy()
-        wa_pick = st.selectbox(
-            "اختر العميل لفتح واتساب",
-            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _,r in scope_for_wa.iterrows()],
-            key="wa_pick"
-        )
-        default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقوا معاك موعد المتابعة. 👍"
+        wa_pick = st.selectbox("اختر العميل لفتح واتساب",
+                               [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _,r in scope_for_wa.iterrows()],
+                               key="wa_pick")
+        default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقو معاك موعد المتابعة. 👍"
         wa_msg = st.text_area("الرسالة (WhatsApp)", value=default_msg, key="wa_msg")
         if st.button("📲 فتح واتساب"):
             raw_tel = wa_pick.split("—")[-1]
             tel_norm = normalize_tn_phone(raw_tel)
             url = f"https://wa.me/{tel_norm}?text={urllib.parse.quote(wa_msg)}"
-            st.markdown(f"[افتح المحادثة الآن]({url})")
-            st.info("اضغط على الرابط لفتح واتساب.")
+            st.markdown(f"[افتح المحادثة الآن]({url})"); st.info("اضغط على الرابط لفتح واتساب.")
     except Exception as e:
         st.warning(f"WhatsApp: {e}")
 
@@ -617,18 +616,15 @@ if role=="موظف" and employee:
                     for i,r in enumerate(values[1:], start=2):
                         if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick: row_idx=i; break
                     if not row_idx:
-                        st.error("❌ لم يتم العثور على هذا العميل.")
-                        st.stop()
+                        st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
                     row_values = ws_src.row_values(row_idx)
                     if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
                     row_values = row_values[:len(EXPECTED_HEADERS)]
                     row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                    ws_dst.append_row(row_values)
-                    ws_src.delete_rows(row_idx)
+                    ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
                     wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
                     wslog.append_row([datetime.now(timezone.utc).isoformat(), employee, src_emp, dst_emp, row_values[0], normalize_tn_phone(row_values[1])])
-                    st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
-                    st.cache_data.clear()
+                    st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
@@ -676,16 +672,12 @@ if tab_choice == "أرشيف" and role == "موظف" and employee:
                 for i,r in enumerate(vals[1:], start=2):
                     if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick: row_idx=i; break
                 if not row_idx:
-                    st.error("❌ لم يتم العثور على هذا العميل.")
-                    st.stop()
+                    st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
                 row_values = ws_emp.row_values(row_idx)
-                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-لن(len(row_values)))
                 row_values = row_values[:len(EXPECTED_HEADERS)]
-                ws_arch.append_row(row_values)
-                ws_emp.delete_rows(row_idx)
-                st.success("✅ تم النقل للأرشيف")
-                st.cache_data.clear()
-                st.rerun()
+                ws_arch.append_row(row_values); ws_emp.delete_rows(row_idx)
+                st.success("✅ تم النقل للأرشيف"); st.cache_data.clear(); st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
@@ -704,38 +696,14 @@ if tab_choice == "أرشيف" and role == "موظف" and employee:
                 for i,r in enumerate(valsA[1:], start=2):
                     if len(r)>tel_idxA and normalize_tn_phone(r[tel_idxA])==phone_pick: row_idx=i; break
                 if not row_idx:
-                    st.error("❌ لم يتم العثور عليه في الأرشيف.")
-                    st.stop()
+                    st.error("❌ لم يتم العثور عليه في الأرشيف."); st.stop()
                 row_values = ws_arch.row_values(row_idx)
-                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXEXPECTED_HEADERS)-len(row_values))
-                # ↑ تصحيح: نستخدم EXPECTED_HEADERS
-            except Exception:
-                # إعادة كتابة الجزء السابق بطريقة سليمة دون خطأ مطبعي
-                try:
-                    row_values = ws_arch.row_values(row_idx)
-                    if len(row_values) < len(EXPECTED_HEADERS):
-                        row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
-                    row_values = row_values[:len(EXPECTED_HEADERS)]
-                    ws_emp.append_row(row_values)
-                    ws_arch.delete_rows(row_idx)
-                    st.success("✅ تم الاسترجاع")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e2:
-                    st.error(f"❌ خطأ: {e2}")
-            else:
-                try:
-                    row_values = ws_arch.row_values(row_idx)
-                    if len(row_values) < len(EXPECTED_HEADERS):
-                        row_values += [""] * (len(EXPECTED_HEADERS) - len(row_values))
-                    row_values = row_values[:len(EXPECTED_HEADERS)]
-                    ws_emp.append_row(row_values)
-                    ws_arch.delete_rows(row_idx)
-                    st.success("✅ تم الاسترجاع")
-                    st.cache_data.clear()
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"❌ خطأ: {e}")
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                row_values = row_values[:len(EXPECTED_HEADERS)]
+                ws_emp.append_row(row_values); ws_arch.delete_rows(row_idx)
+                st.success("✅ تم الاسترجاع"); st.cache_data.clear(); st.rerun()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
 
 # ============ صفحة الأدمِن ============
 if role=="أدمن":
@@ -756,8 +724,7 @@ if role=="أدمن":
                     else:
                         sh.add_worksheet(title=new_emp, rows="1000", cols="20")
                         sh.worksheet(new_emp).update("1:1",[EXPECTED_HEADERS])
-                        st.success("✔️ تم الإنشاء")
-                        st.cache_data.clear()
+                        st.success("✔️ تم الإنشاء"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
         with colB:
@@ -784,8 +751,7 @@ if role=="أدمن":
                         insc_val = "Oui" if inscription_a=="Inscrit" else "Pas encore"
                         ws = sh.worksheet(target_emp)
                         ws.append_row([nom_a, tel_norm, type_contact_a, formation_a, "", fmt_date(date_ajout_a), fmt_date(suivi_date_a), "", insc_val, target_emp, ""])
-                        st.success("✅ تمت الإضافة")
-                        st.cache_data.clear()
+                        st.success("✅ تمت الإضافة"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
         with colC:
@@ -795,26 +761,21 @@ if role=="أدمن":
                 try:
                     sh = get_spreadsheet()
                     sh.del_worksheet(sh.worksheet(emp_to_delete))
-                    st.success("تم الحذف")
-                    st.cache_data.clear()
+                    st.success("تم الحذف"); st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
-        st.markdown("---")
-        st.subheader("📜 سجلّ نقل العملاء")
+        st.markdown("---"); st.subheader("📜 سجلّ نقل العملاء")
         wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
         vals = wslog.get_all_values()
-        if vals and len(vals) > 1:
+        if vals and len(vals)>1:
             df_log = pd.DataFrame(vals[1:], columns=vals[0])
             def _fmt_ts(x):
-                try:
-                    return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
-                except:
-                    return x
-            if "timestamp" in df_log.columns:
-                df_log["وقت"] = df_log["timestamp"].apply(_fmt_ts)
-            show_cols = ["وقت","moved_by","src_employee","dst_employee","client_name","phone"]
-            show_cols = [c for c in show_cols if c in df_log.columns]
+                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except: return x
+            if "timestamp" in df_log.columns: df_log["وقت"]=df_log["timestamp"].apply(_fmt_ts)
+            show_cols=["وقت","moved_by","src_employee","dst_employee","client_name","phone"]
+            show_cols=[c for c in show_cols if c in df_log.columns]
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
         else:
             st.caption("لا يوجد سجلّ نقل.")
