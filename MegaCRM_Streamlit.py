@@ -384,18 +384,18 @@ if role=="موظف" and employee:
     st.markdown("### 📋 قائمة العملاء"); render_table(filtered_df)
 
 # --- 1) عرض العملاء الذين لديهم تنبيهات ---
-if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
-    _df_alerts = filtered_df.copy()
-    _df_alerts["Alerte"] = _df_alerts.get("Alerte_view", "")
-    alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip() != ""]
-    st.markdown("### 🚨 عملاء مع تنبيهات")
-    if alerts_df.empty:
-        st.info("لا توجد تنبيهات حاليًا ضمن الفلترة.")
-    else:
-        try:
-            render_table(alerts_df)
-        except NameError:
-            st.dataframe(alerts_df, use_container_width=True)
+    if not filtered_df.empty and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+        _df_alerts = filtered_df.copy()
+        _df_alerts["Alerte"] = _df_alerts.get("Alerte_view", "")
+        alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip() != ""]
+        st.markdown("### 🚨 عملاء مع تنبيهات")
+        if alerts_df.empty:
+            st.info("لا توجد تنبيهات حاليًا ضمن الفلترة.")
+        else:
+            try:
+                render_table(alerts_df)
+            except NameError:
+                st.dataframe(alerts_df, use_container_width=True)
 
 
         # ================== ➕ أضف عميل جديد (للموظّف) ==================
