@@ -384,7 +384,8 @@ if role=="موظف" and employee:
     st.markdown("### 📋 قائمة العملاء"); render_table(filtered_df)
 
             # فلترة بالتنبيهات
-        _df_alerts = filtered_df.copy(); _df_alerts["Alerte"]=_df_alerts.get("Alerte_view","")
+        _df_alerts = filtered_df.copy();
+        _df_alerts["Alerte"]=_df_alerts.get("Alerte_view","")
         if st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
             alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip()!=""]
             st.markdown("### 🚨 عملاء مع تنبيهات")
