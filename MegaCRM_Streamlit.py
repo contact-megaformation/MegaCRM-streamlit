@@ -381,46 +381,9 @@ if role=="موظف" and employee:
                   .applymap(mark_alert_cell, subset=["Alerte"])
                   .applymap(color_tag, subset=["Tag"]))
         st.dataframe(styled, use_container_width=True)
+    st.markdown("### 📋 قائمة العملاء"); render_table(filtered_df)
 
-    # ===== فلترة حسب التكوين لعملاء الموظّف (للشهر المختار) =====
-    st.markdown("### 📋 قائمة العملاء")
-
-    # لستة التكوينات من بيانات الموظّف في الشهر المختار
-    formations_emp = (
-        filtered_df["Formation"]
-        .fillna("")
-        .astype(str)
-        .str.strip()
-        .replace({"": "غير محدد"})
-        .unique()
-        .tolist()
-    )
-    formations_emp = sorted(formations_emp)
-
-    # واجهة اختيار التكوين (ينجم يختار أكثر من واحد)
-    chosen_forms = st.multiselect(
-        "🎓 اختر التكوين/ات لعرض العملاء:",
-        options=formations_emp,
-        default=formations_emp  # افتراضياً يوري الكل
-    )
-
-    # تطبيق الفلترة
-    if chosen_forms:
-        df_show = filtered_df.copy()
-        df_show["Formation_norm"] = (
-            df_show["Formation"].fillna("").astype(str).str.strip().replace({"": "غير محدد"})
-        )
-        df_show = df_show[df_show["Formation_norm"].isin(chosen_forms)]
-        df_show = df_show.drop(columns=["Formation_norm"])
-    else:
-        # لو فرّغ الاختيار، نوري حتى شي (باش يكون واضح)
-        df_show = filtered_df.iloc[0:0].copy()
-
-    # العرض
-    render_table(df_show)
-
-
-        # فلترة بالتنبيهات
+            # فلترة بالتنبيهات
         _df_alerts = filtered_df.copy(); _df_alerts["Alerte"]=_df_alerts.get("Alerte_view","")
         if st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
             alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip()!=""]
