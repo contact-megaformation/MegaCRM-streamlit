@@ -322,22 +322,47 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         st.markdown("#### 👨‍💼 حسب الموظّف")
         grp_emp = (
             df_month.groupby("__sheet_name", dropna=False)
-            .agg(Clients=("Nom & Prénom","count"),
-                 Inscrits=("Inscription_norm",lambda x:(x=="oui").sum()),
-                 Alerts=("Alerte_view",lambda x:(x.fillna("").astype(str).str.strip()!="").sum()))
-            .reset_index().rename(columns={"__sheet_name":"الموظف"})
+            .agg(
+                Clients=("Nom & Prénom", "count"),
+                Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
+                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip() != "").sum()),
+            )
+            .reset_index()
+            .rename(columns={"__sheet_name": "الموظف"})
         )
-        grp_emp["% تسجيل"]=((grp_emp["Inscrits"]/grp_emp["Clients"]).replace([float("inf"),float("nan")],0)*100).round(2)
-        st.dataframe(grp_emp.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
-        st.markdown("#### 📚 حسب التكوين")
-        grp_form = (
-            df_month.groupby("Formation", dropna=False)
-            .agg(Clients=("Nom & Prénom","count"), Inscrits=("Inscription_norm",lambda x:(x=="oui").sum()))
-            .reset_index().rename(columns={"Formation":"التكوين"})
-        )
-        grp_form["% تسجيل"]=((grp_form["Inscrits"]/grp_form["Clients"]).replace([float("inf"),float("nan")],0)*100).round(2)
-        st.dataframe(grp_form.sort_values(["Inscrits","Clients"], ascending=False), use_container_width=True)
 
+        # === عمود "Inscrits اليوم" لكل موظف ===
+        # نحسب المسجّلين اليوم من كامل الداتا (مشروط بأنه اليوم فقط)
+        _today = datetime.now().date()
+        df_all_dates = df_all.copy()
+        df_all_dates["DateAjout_dt"] = pd.to_datetime(df_all_dates["Date ajout"], dayfirst=True, errors="coerce")
+
+        daily_map = (
+            df_all_dates.loc[
+                (df_all_dates["DateAjout_dt"].dt.date == _today) &
+                (df_all_dates["Inscription"].fillna("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"]))
+            ]
+            .groupby("__sheet_name")["Nom & Prénom"].count()
+        )
+
+        # ندمج العدّ اليومي مع جدول الشهر
+        grp_emp = grp_emp.merge(
+            daily_map.rename("Inscrits اليوم").reset_index().rename(columns={"__sheet_name": "الموظف"}),
+            on="الموظف",
+            how="left"
+        )
+        grp_emp["Inscrits اليوم"] = grp_emp["Inscrits اليوم"].fillna(0).astype(int)
+
+        # نسبة التسجيل
+        grp_emp["% تسجيل"] = (
+            (grp_emp["Inscrits"] / grp_emp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
+        ).round(2)
+
+        # ترتيب الأعمدة للعرض (اختياري)
+        cols_order = ["الموظف", "Clients", "Inscrits اليوم", "Inscrits", "% تسجيل", "Alerts"]
+        grp_emp = grp_emp[[c for c in cols_order if c in grp_emp.columns]]
+
+        st.dataframe(grp_emp.sort_values(["Inscrits", "Clients"], ascending=False), use_container_width=True)
 # ============ بحث عام برقم الهاتف ============
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
