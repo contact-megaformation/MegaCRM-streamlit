@@ -1,6 +1,7 @@
 # MegaCRM_Streamlit.py
-# CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف — مع أزرار تفتح MegaPay و Mega Formateur
+# CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف — مع أزرار تفتح MegaPay و Mega Formateur و AttendanceHub
 # + فلترة بالتكوين داخل لوحة الموظّف
+
 import json, urllib.parse, time
 import streamlit as st
 import pandas as pd
@@ -21,8 +22,9 @@ st.markdown(
     """, unsafe_allow_html=True
 )
 
-# أزرار تفتح MegaPay و Mega Formateur
+# أزرار تفتح MegaPay و Mega Formateur و AttendanceHub
 with st.sidebar:
+    # MegaPay
     st.markdown("### 💵 إدارة المداخيل والمصاريف")
     st.markdown(
         """
@@ -48,6 +50,7 @@ with st.sidebar:
 
     st.markdown("---")
 
+    # Formateur
     st.markdown("### 👨‍🏫 بوابة المكوّنين")
     st.markdown(
         """
@@ -66,6 +69,32 @@ with st.sidebar:
               box-shadow:0 4px 8px rgba(0,0,0,0.15);
            ">
            🔀 فتح Mega Formateur
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown("---")
+
+    # AttendanceHub (غيابات المتكوّنين)
+    st.markdown("### 🕒 غيابات المتكوّنين")
+    st.markdown(
+        """
+        <a href="https://attendancehub.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#8e44ad,#9b59b6);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🕒 فتح AttendanceHub
         </a>
         """,
         unsafe_allow_html=True
@@ -185,7 +214,7 @@ def load_all_data():
         df["__sheet_name"] = title
         all_dfs.append(df)
     big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS+["__sheet_name"])
-    return big, all_emps
+    return big, all_employes
 
 df_all, all_employes = load_all_data()
 
@@ -209,24 +238,29 @@ def admin_lock_ui():
     with st.sidebar.expander("🔐 إدارة (Admin)", expanded=(role=="أدمن" and not admin_unlocked())):
         if admin_unlocked():
             if st.button("قفل صفحة الأدمِن"):
-                st.session_state["admin_ok"]=False; st.session_state["admin_ok_at"]=None; st.rerun()
+                st.session_state["admin_ok"]=False
+                st.session_state["admin_ok_at"]=None
+                st.rerun()
         else:
             admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password")
             if st.button("فتح صفحة الأدمِن"):
                 conf = str(st.secrets.get("admin_password","admin123"))
                 if admin_pwd and admin_pwd==conf:
-                    st.session_state["admin_ok"]=True; st.session_state["admin_ok_at"]=datetime.now()
+                    st.session_state["admin_ok"]=True
+                    st.session_state["admin_ok_at"]=datetime.now()
                     st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
                 else:
                     st.error("كلمة سرّ غير صحيحة.")
 
-if role=="أدمن": admin_lock_ui()
+if role=="أدمن":
+    admin_lock_ui()
 
 def emp_pwd_for(emp_name:str)->str:
     try:
         mp = st.secrets["employee_passwords"]
         return str(mp.get(emp_name, mp.get("_default","1234")))
-    except Exception: return "1234"
+    except Exception:
+        return "1234"
 
 def emp_unlocked(emp_name:str)->bool:
     ok = st.session_state.get(f"emp_ok::{emp_name}", False)
@@ -273,7 +307,10 @@ if not df_all.empty:
     df_all.loc[inscrit_mask, "Date de suivi"] = ""
     df_all.loc[inscrit_mask, "Alerte_view"] = ""
 else:
-    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES=set()
+    df_all["Alerte_view"] = ""
+    df_all["Mois"] = ""
+    df_all["Téléphone_norm"] = ""
+    ALL_PHONES=set()
 
 # ============ Dashboard سريع ============
 st.subheader("لوحة إحصائيات سريعة")
@@ -303,7 +340,8 @@ else:
     c5.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
 
 # ============ إحصائيات شهرية ============
-st.markdown("---"); st.subheader("📅 إحصائيات شهرية (العملاء)")
+st.markdown("---")
+st.subheader("📅 إحصائيات شهرية (العملاء)")
 if not df_all.empty and "DateAjout_dt" in df_all.columns:
     df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
@@ -319,6 +357,7 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
         c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
         c3.metric("🚨 تنبيهات", f"{alerts_m}")
         c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+
         st.markdown("#### 👨‍💼 حسب الموظّف")
         grp_emp = (
             df_month.groupby("__sheet_name", dropna=False)
@@ -331,13 +370,21 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
             .rename(columns={"__sheet_name": "الموظف"})
         )
 
-        # === عمود "Inscrits اليوم" لكل موظف ===
-        # نحسب المسجّلين اليوم من كامل الداتا (مشروط بأنه اليوم فقط)
+        # === اليوم: عملاء و مسجّلين لكل موظّف ===
         _today = datetime.now().date()
         df_all_dates = df_all.copy()
         df_all_dates["DateAjout_dt"] = pd.to_datetime(df_all_dates["Date ajout"], dayfirst=True, errors="coerce")
 
-        daily_map = (
+        # 1) العملاء المضافون اليوم
+        clients_today_map = (
+            df_all_dates.loc[
+                df_all_dates["DateAjout_dt"].dt.date == _today
+            ]
+            .groupby("__sheet_name")["Nom & Prénom"].count()
+        )
+
+        # 2) المسجّلون اليوم
+        daily_insc_map = (
             df_all_dates.loc[
                 (df_all_dates["DateAjout_dt"].dt.date == _today) &
                 (df_all_dates["Inscription"].fillna("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"]))
@@ -345,12 +392,19 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
             .groupby("__sheet_name")["Nom & Prénom"].count()
         )
 
-        # ندمج العدّ اليومي مع جدول الشهر
+        # دمج مع جدول الشهر
         grp_emp = grp_emp.merge(
-            daily_map.rename("Inscrits اليوم").reset_index().rename(columns={"__sheet_name": "الموظف"}),
+            clients_today_map.rename("Clients اليوم").reset_index().rename(columns={"__sheet_name": "الموظف"}),
             on="الموظف",
             how="left"
         )
+        grp_emp = grp_emp.merge(
+            daily_insc_map.rename("Inscrits اليوم").reset_index().rename(columns={"__sheet_name": "الموظف"}),
+            on="الموظف",
+            how="left"
+        )
+
+        grp_emp["Clients اليوم"]  = grp_emp["Clients اليوم"].fillna(0).astype(int)
         grp_emp["Inscrits اليوم"] = grp_emp["Inscrits اليوم"].fillna(0).astype(int)
 
         # نسبة التسجيل
@@ -358,11 +412,12 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
             (grp_emp["Inscrits"] / grp_emp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
         ).round(2)
 
-        # ترتيب الأعمدة للعرض (اختياري)
-        cols_order = ["الموظف", "Clients", "Inscrits اليوم", "Inscrits", "% تسجيل", "Alerts"]
+        # ترتيب الأعمدة للعرض
+        cols_order = ["الموظف", "Clients", "Clients اليوم", "Inscrits اليوم", "Inscrits", "% تسجيل", "Alerts"]
         grp_emp = grp_emp[[c for c in cols_order if c in grp_emp.columns]]
 
         st.dataframe(grp_emp.sort_values(["Inscrits", "Clients"], ascending=False), use_container_width=True)
+
 # ============ بحث عام برقم الهاتف ============
 st.subheader("🔎 بحث عام برقم الهاتف")
 global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
@@ -520,23 +575,29 @@ if role=="موظف" and employee:
         if submitted:
             try:
                 ws = get_spreadsheet().worksheet(employee)
-                values = ws.get_all_values(); header = values[0] if values else []
+                values = ws.get_all_values()
+                header = values[0] if values else []
                 tel_idx = header.index("Téléphone")
                 row_idx=None
                 for i,r in enumerate(values[1:], start=2):
-                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==chosen_phone: row_idx=i; break
+                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==chosen_phone:
+                        row_idx=i
+                        break
                 if not row_idx:
                     st.error("❌ تعذّر إيجاد الصف.")
                     st.stop()
                 col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
                 new_phone_norm = normalize_tn_phone(new_phone_raw)
                 if not new_name.strip():
-                    st.error("❌ الاسم مطلوب."); st.stop()
+                    st.error("❌ الاسم مطلوب.")
+                    st.stop()
                 if not new_phone_norm.strip():
-                    st.error("❌ الهاتف مطلوب."); st.stop()
+                    st.error("❌ الهاتف مطلوب.")
+                    st.stop()
                 phones_except = set(df_all["Téléphone_norm"]) - {normalize_tn_phone(chosen_phone)}
                 if new_phone_norm in phones_except:
-                    st.error("⚠️ الرقم موجود مسبقًا."); st.stop()
+                    st.error("⚠️ الرقم موجود مسبقًا.")
+                    st.stop()
                 ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                 ws.update_cell(row_idx, col_map["Téléphone"],   new_phone_norm)
                 ws.update_cell(row_idx, col_map["Formation"],   new_formation.strip())
@@ -550,25 +611,30 @@ if role=="موظف" and employee:
                     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
                     appended = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {extra_note.strip()}"
                     ws.update_cell(row_idx, col_map["Remarque"], appended)
-                st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
+                st.success("✅ تم حفظ التعديلات")
+                st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
     # ================== ملاحظات سريعة + Tag ==================
     st.markdown("### 📝 ملاحظة سريعة")
     scope_df = filtered_df if not filtered_df.empty else df_emp
-    scope_df = scope_df.copy(); scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
     tel_key = st.selectbox("اختر العميل", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()])
     tel_to_update = normalize_tn_phone(tel_key.split("—")[-1])
     quick_note = st.text_area("🗒️ النص")
     if st.button("📌 أضف الملاحظة"):
         try:
             ws = get_spreadsheet().worksheet(employee)
-            values = ws.get_all_values(); header = values[0] if values else []
+            values = ws.get_all_values()
+            header = values[0] if values else []
             tel_idx = header.index("Téléphone")
             row_idx=None
             for i,r in enumerate(values[1:], start=2):
-                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_to_update: row_idx=i; break
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_to_update:
+                    row_idx=i
+                    break
             if not row_idx:
                 st.error("❌ الهاتف غير موجود.")
             else:
@@ -577,7 +643,8 @@ if role=="موظف" and employee:
                 stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
                 updated = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {quick_note.strip()}"
                 ws.update_cell(row_idx, rem_col, updated)
-                st.success("✅ تمت الإضافة"); st.cache_data.clear()
+                st.success("✅ تمت الإضافة")
+                st.cache_data.clear()
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
@@ -588,18 +655,22 @@ if role=="موظف" and employee:
     if st.button("🖌️ تلوين"):
         try:
             ws = get_spreadsheet().worksheet(employee)
-            values = ws.get_all_values(); header = values[0] if values else []
+            values = ws.get_all_values()
+            header = values[0] if values else []
             tel_idx = header.index("Téléphone")
             row_idx=None
             for i,r in enumerate(values[1:], start=2):
-                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_color: row_idx=i; break
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_color:
+                    row_idx=i
+                    break
             if not row_idx:
                 st.error("❌ لم يتم إيجاد العميل.")
             else:
                 st.session_state["last_color"]=hex_color
                 color_col = EXPECTED_HEADERS.index("Tag")+1
                 ws.update_cell(row_idx, color_col, hex_color)
-                st.success("✅ تم التلوين"); st.cache_data.clear()
+                st.success("✅ تم التلوين")
+                st.cache_data.clear()
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
@@ -616,7 +687,8 @@ if role=="موظف" and employee:
             raw_tel = wa_pick.split("—")[-1]
             tel_norm = normalize_tn_phone(raw_tel)
             url = f"https://wa.me/{tel_norm}?text={urllib.parse.quote(wa_msg)}"
-            st.markdown(f"[افتح المحادثة الآن]({url})"); st.info("اضغط على الرابط لفتح واتساب.")
+            st.markdown(f"[افتح المحادثة الآن]({url})")
+            st.info("اضغط على الرابط لفتح واتساب.")
     except Exception as e:
         st.warning(f"WhatsApp: {e}")
 
@@ -636,20 +708,28 @@ if role=="موظف" and employee:
                 try:
                     sh = get_spreadsheet()
                     ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
-                    values = ws_src.get_all_values(); header = values[0] if values else []
-                    tel_idx = header.index("Téléphone"); row_idx=None
+                    values = ws_src.get_all_values()
+                    header = values[0] if values else []
+                    tel_idx = header.index("Téléphone")
+                    row_idx=None
                     for i,r in enumerate(values[1:], start=2):
-                        if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick: row_idx=i; break
+                        if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick:
+                            row_idx=i
+                            break
                     if not row_idx:
-                        st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
+                        st.error("❌ لم يتم العثور على هذا العميل.")
+                        st.stop()
                     row_values = ws_src.row_values(row_idx)
-                    if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                    if len(row_values)<len(EXPECTED_HEADERS):
+                        row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
                     row_values = row_values[:len(EXPECTED_HEADERS)]
                     row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
-                    ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
+                    ws_dst.append_row(row_values)
+                    ws_src.delete_rows(row_idx)
                     wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
                     wslog.append_row([datetime.now(timezone.utc).isoformat(), employee, src_emp, dst_emp, row_values[0], normalize_tn_phone(row_values[1])])
-                    st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}"); st.cache_data.clear()
+                    st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
+                    st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ أثناء النقل: {e}")
 
@@ -690,19 +770,27 @@ if tab_choice == "أرشيف" and role == "موظف" and employee:
             try:
                 sh = get_spreadsheet()
                 ws_emp = sh.worksheet(employee)
-                vals = ws_emp.get_all_values(); header = vals[0] if vals else []
+                vals = ws_emp.get_all_values()
+                header = vals[0] if vals else []
                 tel_idx = header.index("Téléphone")
                 phone_pick = normalize_tn_phone(move_opt.split("—")[-1])
                 row_idx=None
                 for i,r in enumerate(vals[1:], start=2):
-                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick: row_idx=i; break
+                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick:
+                        row_idx=i
+                        break
                 if not row_idx:
-                    st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
+                    st.error("❌ لم يتم العثور على هذا العميل.")
+                    st.stop()
                 row_values = ws_emp.row_values(row_idx)
-                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-لن(len(row_values)))
+                if len(row_values)<len(EXPECTED_HEADERS):
+                    row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
                 row_values = row_values[:len(EXPECTED_HEADERS)]
-                ws_arch.append_row(row_values); ws_emp.delete_rows(row_idx)
-                st.success("✅ تم النقل للأرشيف"); st.cache_data.clear(); st.rerun()
+                ws_arch.append_row(row_values)
+                ws_emp.delete_rows(row_idx)
+                st.success("✅ تم النقل للأرشيف")
+                st.cache_data.clear()
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
@@ -714,19 +802,27 @@ if tab_choice == "أرشيف" and role == "موظف" and employee:
             try:
                 sh = get_spreadsheet()
                 ws_emp = sh.worksheet(employee)
-                valsA = ws_arch.get_all_values(); headerA = valsA[0] if valsA else []
+                valsA = ws_arch.get_all_values()
+                headerA = valsA[0] if valsA else []
                 tel_idxA = headerA.index("Téléphone")
                 phone_pick = normalize_tn_phone(restore_opt.split("—")[-1])
                 row_idx=None
                 for i,r in enumerate(valsA[1:], start=2):
-                    if len(r)>tel_idxA and normalize_tn_phone(r[tel_idxA])==phone_pick: row_idx=i; break
+                    if len(r)>tel_idxA and normalize_tn_phone(r[tel_idxA])==phone_pick:
+                        row_idx=i
+                        break
                 if not row_idx:
-                    st.error("❌ لم يتم العثور عليه في الأرشيف."); st.stop()
+                    st.error("❌ لم يتم العثور عليه في الأرشيف.")
+                    st.stop()
                 row_values = ws_arch.row_values(row_idx)
-                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                if len(row_values)<len(EXPECTED_HEADERS):
+                    row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
                 row_values = row_values[:len(EXPECTED_HEADERS)]
-                ws_emp.append_row(row_values); ws_arch.delete_rows(row_idx)
-                st.success("✅ تم الاسترجاع"); st.cache_data.clear(); st.rerun()
+                ws_emp.append_row(row_values)
+                ws_arch.delete_rows(row_idx)
+                st.success("✅ تم الاسترجاع")
+                st.cache_data.clear()
+                st.rerun()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
@@ -749,7 +845,8 @@ if role=="أدمن":
                     else:
                         sh.add_worksheet(title=new_emp, rows="1000", cols="20")
                         sh.worksheet(new_emp).update("1:1",[EXPECTED_HEADERS])
-                        st.success("✔️ تم الإنشاء"); st.cache_data.clear()
+                        st.success("✔️ تم الإنشاء")
+                        st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
         with colB:
@@ -768,7 +865,8 @@ if role=="أدمن":
             if sub_admin:
                 try:
                     if not (nom_a and tel_a and formation_a and target_emp):
-                        st.error("❌ حقول ناقصة."); st.stop()
+                        st.error("❌ حقول ناقصة.")
+                        st.stop()
                     tel_norm = normalize_tn_phone(tel_a)
                     if tel_norm in set(df_all["Téléphone_norm"]):
                         st.warning("⚠️ الرقم موجود.")
@@ -776,7 +874,8 @@ if role=="أدمن":
                         insc_val = "Oui" if inscription_a=="Inscrit" else "Pas encore"
                         ws = sh.worksheet(target_emp)
                         ws.append_row([nom_a, tel_norm, type_contact_a, formation_a, "", fmt_date(date_ajout_a), fmt_date(suivi_date_a), "", insc_val, target_emp, ""])
-                        st.success("✅ تمت الإضافة"); st.cache_data.clear()
+                        st.success("✅ تمت الإضافة")
+                        st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
         with colC:
@@ -786,19 +885,24 @@ if role=="أدمن":
                 try:
                     sh = get_spreadsheet()
                     sh.del_worksheet(sh.worksheet(emp_to_delete))
-                    st.success("تم الحذف"); st.cache_data.clear()
+                    st.success("تم الحذف")
+                    st.cache_data.clear()
                 except Exception as e:
                     st.error(f"❌ خطأ: {e}")
 
-        st.markdown("---"); st.subheader("📜 سجلّ نقل العملاء")
+        st.markdown("---")
+        st.subheader("📜 سجلّ نقل العملاء")
         wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
         vals = wslog.get_all_values()
         if vals and len(vals)>1:
             df_log = pd.DataFrame(vals[1:], columns=vals[0])
             def _fmt_ts(x):
-                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
-                except: return x
-            if "timestamp" in df_log.columns: df_log["وقت"]=df_log["timestamp"].apply(_fmt_ts)
+                try:
+                    return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except:
+                    return x
+            if "timestamp" in df_log.columns:
+                df_log["وقت"]=df_log["timestamp"].apply(_fmt_ts)
             show_cols=["وقت","moved_by","src_employee","dst_employee","client_name","phone"]
             show_cols=[c for c in show_cols if c in df_log.columns]
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
