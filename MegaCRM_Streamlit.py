@@ -633,6 +633,31 @@ if role=="موظف" and employee:
                 st.error(f"❌ خطأ: {e}")
 
     # ================== ملاحظات سريعة + Tag ==================
+        st.markdown("### 📝 ملاحظة سريعة")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy(); scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_key = st.selectbox("اختر العميل", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()])
+    tel_to_update = normalize_tn_phone(tel_key.split("—")[-1])
+    quick_note = st.text_area("🗒️ النص")
+    if st.button("📌 أضف الملاحظة"):
+        try:
+            ws = get_spreadsheet().worksheet(employee)
+            values = ws.get_all_values(); header = values[0] if values else []
+            tel_idx = header.index("Téléphone")
+            row_idx=None
+            for i,r in enumerate(values[1:], start=2):
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_to_update: row_idx=i; break
+            if not row_idx:
+                st.error("❌ الهاتف غير موجود.")
+            else:
+                rem_col = EXPECTED_HEADERS.index("Remarque")+1
+                old_rem = ws.cell(row_idx, rem_col).value or ""
+                stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                updated = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {quick_note.strip()}"
+                ws.update_cell(row_idx, rem_col, updated)
+                st.success("✅ تمت الإضافة"); st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
     st.markdown("### 🎨 Tag لون")
     tel_key2 = st.selectbox("اختر العميل للتلوين", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()], key="tag_select")
     tel_color = normalize_tn_phone(tel_key2.split("—")[-1])
