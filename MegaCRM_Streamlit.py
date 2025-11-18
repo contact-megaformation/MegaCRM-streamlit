@@ -192,30 +192,46 @@ def ensure_ws(title: str, columns: list[str]):
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = get_spreadsheet()
-    all_dfs, all_emps = [], []
+    all_dfs, all_emps = [], []   # ← هنا اسمها all_emps
+
     for ws in sh.worksheets():
         title = ws.title.strip()
-        if title.endswith("_PAIEMENTS"): continue
-        if title.startswith("_"): continue
-        if title in (REASSIGN_LOG_SHEET,): continue
+        if title.endswith("_PAIEMENTS"):
+            continue
+        if title.startswith("_"):
+            continue
+        if title in (REASSIGN_LOG_SHEET,):
+            continue
 
-        all_emps.append(title)
+        all_emps.append(title)   # ← نستعمل all_emps
+
         rows = ws.get_all_values()
         if not rows:
-            ws.update("1:1",[EXPECTED_HEADERS]); rows = ws.get_all_values()
-        data_rows = rows[1:] if len(rows)>1 else []
+            ws.update("1:1", [EXPECTED_HEADERS])
+            rows = ws.get_all_values()
+
+        data_rows = rows[1:] if len(rows) > 1 else []
         fixed = []
         for r in data_rows:
             r = list(r or [])
-            if len(r)<len(EXPECTED_HEADERS): r += [""]*(len(EXPECTED_HEADERS)-len(r))
-            else: r = r[:len(EXPECTED_HEADERS)]
+            if len(r) < len(EXPECTED_HEADERS):
+                r += [""] * (len(EXPECTED_HEADERS) - len(r))
+            else:
+                r = r[:len(EXPECTED_HEADERS)]
             fixed.append(r)
+
         df = pd.DataFrame(fixed, columns=EXPECTED_HEADERS)
         df["__sheet_name"] = title
         all_dfs.append(df)
-    big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS+["__sheet_name"])
-    return big, all_employes
 
+    big = (
+        pd.concat(all_dfs, ignore_index=True)
+        if all_dfs
+        else pd.DataFrame(columns=EXPECTED_HEADERS + ["__sheet_name"])
+    )
+
+    # كان مكتوبة: return big, all_employes  ← هذا هو الغلط
+    return big, all_emps   # ← هذي الصح
 df_all, all_employes = load_all_data()
 
 # ============ Sidebar ============
