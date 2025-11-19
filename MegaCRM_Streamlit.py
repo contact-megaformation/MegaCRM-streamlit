@@ -513,53 +513,22 @@ if role=="موظف" and employee:
 
     # ================== ➕ أضف عميل جديد (للموظّف) ==================
     st.markdown("### ➕ أضف عميل جديد")
-    with st.form(f"emp_add_client_form::{employee}"):
-        col1, col2 = st.columns(2)
-        with col1:
-            nom_emp   = st.text_input("👤 الاسم و اللقب", key=f"emp_add_nom::{employee}")
-            tel_emp   = st.text_input("📞 رقم الهاتف", key=f"emp_add_tel::{employee}")
-            formation_emp = st.text_input("📚 التكوين", key=f"emp_add_form::{employee}")
-            inscription_emp = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], key=f"emp_add_insc::{employee}")
-        with col2:
-            type_contact_emp = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key=f"emp_add_type::{employee}")
-            date_ajout_emp   = st.date_input("🕓 تاريخ الإضافة", value=date.today(), key=f"emp_add_dt_add::{employee}")
-            date_suivi_emp   = st.date_input("📆 تاريخ المتابعة", value=date.today(), key=f"emp_add_dt_suivi::{employee}")
+with st.form(f"emp_add_client_form::{employee}"):
+    col1, col2 = st.columns(2)
+    with col1:
+        nom_emp   = st.text_input("👤 الاسم و اللقب", key=f"emp_add_nom::{employee}")
+        tel_emp   = st.text_input("📞 رقم الهاتف", key=f"emp_add_tel::{employee}")
+        formation_emp = st.text_input("📚 التكوين", key=f"emp_add_form::{employee}")
+        inscription_emp = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], key=f"emp_add_insc::{employee}")
+    with col2:
+        type_contact_emp = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key=f"emp_add_type::{employee}")
+        date_ajout_emp   = st.date_input("🕓 تاريخ الإضافة", value=date.today(), key=f"emp_add_dt_add::{employee}")
+        date_suivi_emp   = st.date_input("📆 تاريخ المتابعة", value=date.today(), key=f"emp_add_dt_suivi::{employee}")
 
-        submitted_add_emp = st.form_submit_button("📥 أضف العميل")
+    remarque_emp = st.text_area("🗒️ ملاحظة (اختياري)", key=f"emp_add_rem::{employee}")
 
-    if submitted_add_emp:
-        try:
-            tel_norm = normalize_tn_phone(tel_emp)
-            if not (nom_emp and tel_norm and formation_emp):
-                st.error("❌ حقول أساسية ناقصة (الاسم، الهاتف، التكوين).")
-            elif tel_norm in ALL_PHONES:
-                st.warning("⚠️ الرقم موجود مسبقًا في قاعدة البيانات.")
-            else:
-                insc_val = "Oui" if inscription_emp == "Inscrit" else "Pas encore"
-                row_to_append = [
-                    nom_emp.strip(),
-                    tel_norm,
-                    type_contact_emp,
-                    formation_emp.strip(),
-                    "",  # Remarque
-                    fmt_date(date_ajout_emp),
-                    fmt_date(date_suivi_emp),
-                    "",  # Alerte
-                    insc_val,
-                    employee,  # Employe
-                    ""  # Tag
-                ]
-                sh = get_spreadsheet()
-                ws_emp = sh.worksheet(employee)
-                header = ws_emp.row_values(1) or []
-                if not header or header[:len(EXPECTED_HEADERS)] != EXPECTED_HEADERS:
-                    ws_emp.update("1:1", [EXPECTED_HEADERS])
-                ws_emp.append_row(row_to_append)
-                st.success("✅ تم إضافة العميل بنجاح.")
-                st.cache_data.clear()
-                st.rerun()
-        except Exception as e:
-            st.error(f"❌ خطأ أثناء الإضافة: {e}")
+    submitted_add_emp = st.form_submit_button("📥 أضف العميل")
+
 
     # ================== ✏️ تعديل عميل ==================
     st.markdown("### ✏️ تعديل بيانات عميل")
