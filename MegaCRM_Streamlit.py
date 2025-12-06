@@ -125,7 +125,7 @@ client, SPREADSHEET_ID = make_client_and_sheet_id()
 EXPECTED_HEADERS = [
     "Nom & Prénom",      # 0
     "Téléphone",         # 1
-    "Date de naissance", # 2 (جديد)
+    "Date de naissance", # 2
     "Type de contact",   # 3
     "Formation",         # 4
     "Remarque",          # 5
@@ -203,7 +203,7 @@ def ensure_ws(title: str, columns: list[str]):
         ws.update("1:1", [columns])
     return ws
 
-# ============ تحميل كل أوراق الموظفين (مع دعم الصفوف القديمة) ============
+# ============ تحميل كل أوراق الموظفين (باستعمال أسماء الأعمدة) ============
 @st.cache_data(ttl=600)
 def load_all_data():
     sh = get_spreadsheet()
@@ -211,6 +211,8 @@ def load_all_data():
 
     for ws in sh.worksheets():
         title = ws.title.strip()
+
+        # نستثني أوراق المداخيل والأنظمة الداخلية
         if title.endswith("_PAIEMENTS"):
             continue
         if title.startswith("_"):
@@ -219,30 +221,31 @@ def load_all_data():
             continue
 
         all_emps.append(title)
+
         rows = ws.get_all_values()
         if not rows:
+            # لو الورقة فارغة، نعمل header بالصيغة الجديدة
             ws.update("1:1", [EXPECTED_HEADERS])
             rows = ws.get_all_values()
 
+        header_row = rows[0] if rows else []
         data_rows = rows[1:] if len(rows) > 1 else []
-        fixed = []
 
+        # مابينغ من اسم العمود → index
+        header_map = {str(name).strip(): idx for idx, name in enumerate(header_row)}
+
+        fixed = []
         for r in data_rows:
             r = list(r or [])
-
-            # ✅ حالة قديمة: الصف فيه 11 كولون (ما فماش Date de naissance)
-            if len(r) == len(EXPECTED_HEADERS) - 1:
-                # [Nom, Téléphone, Type de contact, Formation, ...]
-                # ندرج خانة فارغة بعد Téléphone
-                r = r[:2] + [""] + r[2:]
-
-            # بقية الحالات العادية
-            if len(r) < len(EXPECTED_HEADERS):
-                r += [""] * (len(EXPECTED_HEADERS) - len(r))
-            else:
-                r = r[:len(EXPECTED_HEADERS)]
-
-            fixed.append(r)
+            new_row = []
+            # نركّب صف جديد حسب EXPECTED_HEADERS
+            for col_name in EXPECTED_HEADERS:
+                idx = header_map.get(col_name)
+                if idx is not None and idx < len(r):
+                    new_row.append(r[idx])
+                else:
+                    new_row.append("")  # لو الكولون موش موجود في النسخة القديمة
+            fixed.append(new_row)
 
         df = pd.DataFrame(fixed, columns=EXPECTED_HEADERS)
         df["__sheet_name"] = title
@@ -417,12 +420,9 @@ st.subheader("📅 إحصائيات شهرية (العملاء)")
 if not df_all.empty and "DateAjout_dt" in df_all.columns:
     df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
-
-    # ✅ التصحيح: نستعمل if months_avail بدل .size
     month_pick = (
         st.selectbox("اختر شهر", months_avail, index=0) if months_avail else None
     )
-
     if month_pick:
         df_month = df_all[df_all["MonthStr"] == month_pick].copy()
 
