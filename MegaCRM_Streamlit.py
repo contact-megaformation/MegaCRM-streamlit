@@ -1,9 +1,10 @@
-
 # MegaCRM_Streamlit.py
 # CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف
 # + أزرار تفتح MegaPay و Mega Formateur و AttendanceHub
 # + فلترة بالتكوين داخل لوحة الموظّف
 # + إحصائيات شهرية فيها Clients اليوم و Inscrits اليوم
+# + تاريخ ميلاد العميل + تنبيه أعياد الميلاد
+# + تقرير يومي عبر WhatsApp للإدارة
 
 import json, urllib.parse, time
 import streamlit as st
@@ -122,7 +123,7 @@ client, SPREADSHEET_ID = make_client_and_sheet_id()
 
 # ============ ثوابت الجداول ============
 EXPECTED_HEADERS = [
-    "Nom & Prénom","Téléphone","Type de contact","Formation",
+    "Nom & Prénom","Téléphone","Date de naissance","Type de contact","Formation",
     "Remarque","Date ajout","Date de suivi","Alerte",
     "Inscription","Employe","Tag"
 ]
@@ -436,11 +437,46 @@ if role=="موظف" and employee:
         st.stop()
 
     st.subheader(f"📁 لوحة {employee}")
-    df_emp = df_all[df_all["__sheet_name"]==employee].copy()
-    if df_emp.empty:
+    df_emp_raw = df_all[df_all["__sheet_name"]==employee].copy()
+    if df_emp_raw.empty:
         st.warning("⚠️ لا يوجد أي عملاء بعد.")
         st.stop()
 
+    # ===== 🎂 تنبيهات أعياد الميلاد =====
+    try:
+        if "Date de naissance" in df_emp_raw.columns:
+            df_birth = df_emp_raw.copy()
+            df_birth["Birth_dt"] = pd.to_datetime(
+                df_birth["Date de naissance"],
+                dayfirst=True,
+                errors="coerce"
+            )
+            today = datetime.now().date()
+            bday_mask = df_birth["Birth_dt"].dt.month.eq(today.month) & df_birth["Birth_dt"].dt.day.eq(today.day)
+            bday_df = df_birth[bday_mask]
+
+            if not bday_df.empty:
+                st.markdown("### 🎂 تنبيهات أعياد الميلاد اليوم")
+                for _, row in bday_df.iterrows():
+                    name = str(row.get("Nom & Prénom","")).strip()
+                    phone_norm = normalize_tn_phone(row.get("Téléphone",""))
+                    phone_display = format_display_phone(phone_norm)
+
+                    st.success(f"اليوم عيد ميلاد: **{name}** — {phone_display}")
+
+                    default_msg = (
+                        f"🎂 عيد ميلاد سعيد {name}! "
+                        "كامل فريق Mega Formation يتمنّى لك سنة مليانة نجاح وتوفيق 🤍"
+                    )
+
+                    if phone_norm:
+                        wa_url = f"https://wa.me/{phone_norm}?text={urllib.parse.quote(default_msg)}"
+                        st.markdown(f"[📲 بعث تهنئة على واتساب]({wa_url})")
+    except Exception as e:
+        st.warning(f"تعذّر حساب أعياد الميلاد: {e}")
+
+    # نسخة قابلة للاستعمال لباقي السكسيونات
+    df_emp = df_emp_raw.copy()
     df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
     df_emp = df_emp.dropna(subset=["DateAjout_dt"])
     df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
@@ -495,7 +531,15 @@ if role=="موظف" and employee:
             formation_emp = st.text_input("📚 التكوين", key=f"emp_add_form::{employee}")
             inscription_emp = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], key=f"emp_add_insc::{employee}")
         with col2:
-            type_contact_emp = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key=f"emp_add_type::{employee}")
+            type_contact_emp = st.selectbox(
+                "📞 نوع الاتصال",
+                ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"],
+                key=f"emp_add_type::{employee}"
+            )
+            birthday_emp = st.date_input(
+                "🎂 تاريخ الميلاد",
+                key=f"emp_add_birth::{employee}"
+            )
             date_ajout_emp   = st.date_input("🕓 تاريخ الإضافة", value=date.today(), key=f"emp_add_dt_add::{employee}")
             date_suivi_emp   = st.date_input("📆 تاريخ المتابعة", value=date.today(), key=f"emp_add_dt_suivi::{employee}")
 
@@ -515,6 +559,7 @@ if role=="موظف" and employee:
                 row_to_append = [
                     nom_emp.strip(),
                     tel_norm,
+                    fmt_date(birthday_emp),  # Date de naissance
                     type_contact_emp,
                     formation_emp.strip(),
                     remarque_emp.strip(),  # Remarque
@@ -539,7 +584,7 @@ if role=="موظف" and employee:
 
     # ================== ✏️ تعديل عميل ==================
     st.markdown("### ✏️ تعديل بيانات عميل")
-    df_emp_edit = df_emp.copy()
+    df_emp_edit = df_emp_raw.copy()
     df_emp_edit["Téléphone_norm"]=df_emp_edit["Téléphone"].apply(normalize_tn_phone)
     options = {
         f"[{i}] {r['Nom & Prénom']} — {format_display_phone(r['Téléphone_norm'])}": r["Téléphone_norm"]
@@ -557,11 +602,31 @@ if role=="موظف" and employee:
                 new_phone_raw = st.text_input("📞 رقم الهاتف", value=str(cur_row["Téléphone"]))
                 new_formation = st.text_input("📚 التكوين", value=str(cur_row["Formation"]))
             with col2:
-                new_ajout = st.date_input("🕓 تاريخ الإضافة", value=pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date())
-                new_suivi = st.date_input("📆 تاريخ المتابعة", value=(pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if str(cur_row["Date de suivi"]).strip() else date.today()))
-                new_insc  = st.selectbox("🟢 التسجيل", ["Pas encore","Inscrit"], index=(1 if str(cur_row["Inscription"]).strip().lower()=="oui" else 0))
-            new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=str(cur_row.get("Remarque","")))
-            extra_note      = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…")
+                new_birth = st.date_input(
+                    "🎂 تاريخ الميلاد",
+                    value=(
+                        pd.to_datetime(cur_row.get("Date de naissance",""), dayfirst=True, errors="coerce").date()
+                        if str(cur_row.get("Date de naissance","")).strip() else date.today()
+                    )
+                )
+                new_ajout = st.date_input(
+                    "🕓 تاريخ الإضافة",
+                    value=pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date()
+                )
+                new_suivi = st.date_input(
+                    "📆 تاريخ المتابعة",
+                    value=(
+                        pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date()
+                        if str(cur_row["Date de suivi"]).strip() else date.today()
+                    )
+                )
+                new_insc  = st.selectbox(
+                    "🟢 التسجيل",
+                    ["Pas encore","Inscrit"],
+                    index=(1 if str(cur_row["Inscription"]).strip().lower()=="oui" else 0)
+                )
+
+            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…")
             submitted = st.form_submit_button("💾 حفظ التعديلات")
 
         if submitted:
@@ -576,7 +641,7 @@ if role=="موظف" and employee:
                 if not row_idx:
                     st.error("❌ تعذّر إيجاد الصف.")
                     st.stop()
-                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
+                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Date de naissance","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
                 new_phone_norm = normalize_tn_phone(new_phone_raw)
                 if not new_name.strip():
                     st.error("❌ الاسم مطلوب."); st.stop()
@@ -587,12 +652,11 @@ if role=="موظف" and employee:
                     st.error("⚠️ الرقم موجود مسبقًا."); st.stop()
                 ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                 ws.update_cell(row_idx, col_map["Téléphone"],   new_phone_norm)
+                ws.update_cell(row_idx, col_map["Date de naissance"], fmt_date(new_birth))
                 ws.update_cell(row_idx, col_map["Formation"],   new_formation.strip())
                 ws.update_cell(row_idx, col_map["Date ajout"],  fmt_date(new_ajout))
                 ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
                 ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc=="Inscrit" else "Pas encore")
-                if new_remark_full.strip() != str(cur_row.get("Remarque","")).strip():
-                    ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
                 if extra_note.strip():
                     old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
                     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
@@ -602,36 +666,17 @@ if role=="موظف" and employee:
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
 
-    # ================== ملاحظات سريعة + Tag ==================
-    st.markdown("### 📝 ملاحظة سريعة")
-    scope_df = filtered_df if not filtered_df.empty else df_emp
-    scope_df = scope_df.copy(); scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
-    tel_key = st.selectbox("اختر العميل", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()])
-    tel_to_update = normalize_tn_phone(tel_key.split("—")[-1])
-    quick_note = st.text_area("🗒️ النص")
-    if st.button("📌 أضف الملاحظة"):
-        try:
-            ws = get_spreadsheet().worksheet(employee)
-            values = ws.get_all_values(); header = values[0] if values else []
-            tel_idx = header.index("Téléphone")
-            row_idx=None
-            for i,r in enumerate(values[1:], start=2):
-                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_to_update:
-                    row_idx=i; break
-            if not row_idx:
-                st.error("❌ الهاتف غير موجود.")
-            else:
-                rem_col = EXPECTED_HEADERS.index("Remarque")+1
-                old_rem = ws.cell(row_idx, rem_col).value or ""
-                stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                updated = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {quick_note.strip()}"
-                ws.update_cell(row_idx, rem_col, updated)
-                st.success("✅ تمت الإضافة"); st.cache_data.clear()
-        except Exception as e:
-            st.error(f"❌ خطأ: {e}")
-
+    # ================== 🎨 Tag لون ==================
     st.markdown("### 🎨 Tag لون")
-    tel_key2 = st.selectbox("اختر العميل للتلوين", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()], key="tag_select")
+    scope_df = filtered_df إذا لم تكن فارغة وإلا df_emp_raw
+    scope_df = filtered_df if not filtered_df.empty else df_emp_raw
+    scope_df = scope_df.copy()
+    scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_key2 = st.selectbox(
+        "اختر العميل للتلوين",
+        [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()],
+        key="tag_select"
+    )
     tel_color = normalize_tn_phone(tel_key2.split("—")[-1])
     hex_color = st.color_picker("اللون", value=st.session_state.get("last_color","#00AA88"))
     if st.button("🖌️ تلوين"):
@@ -653,13 +698,15 @@ if role=="موظف" and employee:
         except Exception as e:
             st.error(f"❌ خطأ: {e}")
 
-    # واتساب
-    st.markdown("### 💬 تواصل WhatsApp")
+    # واتساب للعميل
+    st.markdown("### 💬 تواصل WhatsApp مع العميل")
     try:
-        scope_for_wa = (filtered_df if not filtered_df.empty else df_emp).copy()
-        wa_pick = st.selectbox("اختر العميل لفتح واتساب",
-                               [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _,r in scope_for_wa.iterrows()],
-                               key="wa_pick")
+        scope_for_wa = (filtered_df if not filtered_df.empty else df_emp_raw).copy()
+        wa_pick = st.selectbox(
+            "اختر العميل لفتح واتساب",
+            [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _,r in scope_for_wa.iterrows()],
+            key="wa_pick"
+        )
         default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقو معاك موعد المتابعة. 👍"
         wa_msg = st.text_area("الرسالة (WhatsApp)", value=default_msg, key="wa_msg")
         if st.button("📲 فتح واتساب"):
@@ -670,6 +717,64 @@ if role=="موظف" and employee:
             st.info("اضغط على الرابط لفتح واتساب.")
     except Exception as e:
         st.warning(f"WhatsApp: {e}")
+
+    # ================== تقرير يومي للإدارة ==================
+    st.markdown("### 📤 تقرير يومي للإدارة (WhatsApp)")
+    try:
+        today = datetime.now().date()
+
+        df_emp_daily = df_emp_raw.copy()
+        df_emp_daily["DateAjout_dt"] = pd.to_datetime(df_emp_daily["Date ajout"], dayfirst=True, errors="coerce")
+
+        today_rows = df_emp_daily[df_emp_daily["DateAjout_dt"].dt.date == today]
+
+        total_today = len(today_rows)
+
+        inscrits_today = int(
+            today_rows["Inscription"].fillنا("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"]).sum()
+        )
+
+        alerts_today = int(
+            today_rows["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum()
+            if "Alerte_view" in today_rows.columns else 0
+        )
+
+        # تفصيل حسب التكوين
+        if not today_rows.empty:
+            by_form = (
+                today_rows.groupby("Formation")["Nom & Prénom"]
+                .count()
+                .reset_index()
+            )
+        else:
+            by_form = pd.DataFrame(columns=["Formation", "Nom & Prénom"])
+
+        lines = [
+            f"تقرير يومي لموظف: {employee}",
+            f"التاريخ: {today.strftime('%d/%m/%Y')}",
+            "",
+            f"- عدد العملاء المضافين اليوم: {total_today}",
+            f"- عدد المسجلين اليوم: {inscrits_today}",
+            f"- عدد العملاء مع تنبيهات: {alerts_today}",
+        ]
+
+        if not by_form.empty:
+            lines.append("")
+            lines.append("تفصيل حسب التكوين:")
+            for _, r in by_form.iterrows():
+                lines.append(f"• {r['Formation']}: {int(r['Nom & Prénom'])} عميل")
+
+        report_text = "\n".join(lines)
+
+        st.text_area("معاينة التقرير الذي سيُرسل", value=report_text, height=180)
+
+        if st.button("📲 إرسال تقرير اليوم إلى 22423590 عبر WhatsApp"):
+            wa_admin_number = "21622423590"
+            url = f"https://wa.me/{wa_admin_number}?text={urllib.parse.quote(report_text)}"
+            st.markdown(f"[اضغط هنا لإرسال التقرير عبر WhatsApp]({url})")
+            st.info("إضغط على الرابط، يتفتحلك WhatsApp Web / التطبيق وتبعث التقرير.")
+    except Exception as e:
+        st.warning(f"تعذر تجهيز التقرير اليومي: {e}")
 
     # نقل عميل + سجلّ
     st.markdown("### 🔁 نقل عميل بين الموظفين")
@@ -818,6 +923,7 @@ if role=="أدمن":
             with st.form("admin_add_client_form"):
                 nom_a   = st.text_input("👤 الاسم و اللقب")
                 tel_a   = st.text_input("📞 الهاتف")
+                date_naiss_a = st.date_input("🎂 تاريخ الميلاد")
                 formation_a = st.text_input("📚 التكوين")
                 type_contact_a = st.selectbox("نوع التواصل", ["Visiteur","Appel téléphonique","WhatsApp","Social media"])
                 inscription_a  = st.selectbox("التسجيل", ["Pas encore","Inscrit"])
@@ -838,6 +944,7 @@ if role=="أدمن":
                         ws.append_row([
                             nom_a,
                             tel_norm,
+                            fmt_date(date_naiss_a),  # Date de naissance
                             type_contact_a,
                             formation_a,
                             remarque_a.strip(),
@@ -878,3 +985,7 @@ if role=="أدمن":
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
         else:
             st.caption("لا يوجد سجلّ نقل.")
+
+---
+
+لو يطلعلك Error في سطر معيّن (خاصة بعد تحديث الهيدرات في Google Sheets)، انسخلي رسالة الغلط وإنصلحهاولك سطر سطر 🌟
