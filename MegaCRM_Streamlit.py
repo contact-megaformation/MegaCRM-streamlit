@@ -668,7 +668,7 @@ if role=="موظف" and employee:
 
     # ================== 🎨 Tag لون ==================
     st.markdown("### 🎨 Tag لون")
-    scope_df = filtered_df إذا لم تكن فارغة وإلا df_emp_raw
+    scope_df = filtered_df df_emp_raw
     scope_df = filtered_df if not filtered_df.empty else df_emp_raw
     scope_df = scope_df.copy()
     scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
