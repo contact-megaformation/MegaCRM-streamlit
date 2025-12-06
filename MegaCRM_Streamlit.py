@@ -417,9 +417,12 @@ st.subheader("📅 إحصائيات شهرية (العملاء)")
 if not df_all.empty and "DateAjout_dt" in df_all.columns:
     df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
     months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
+
+    # ✅ التصحيح: نستعمل if months_avail بدل .size
     month_pick = (
-        st.selectbox("اختر شهر", months_avail, index=0) if months_avail.size > 0 else None
+        st.selectbox("اختر شهر", months_avail, index=0) if months_avail else None
     )
+
     if month_pick:
         df_month = df_all[df_all["MonthStr"] == month_pick].copy()
 
