@@ -82,7 +82,7 @@ with st.sidebar:
     st.markdown("### 🕒 غيابات المتربّصين")
     st.markdown(
         """
-        <a href="https://attendancehub-mega.streamlit.app/" target="_blank"
+        <a href="https://crm-apprenant.streamlit.app//" target="_blank"
            style="
               display:inline-block;
               background:linear-gradient(90deg,#c0392b,#e74c3c);
