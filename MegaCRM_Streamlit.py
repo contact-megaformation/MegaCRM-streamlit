@@ -985,7 +985,3 @@ if role=="أدمن":
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
         else:
             st.caption("لا يوجد سجلّ نقل.")
-
----
-
-لو يطلعلك Error في سطر معيّن (خاصة بعد تحديث الهيدرات في Google Sheets)، انسخلي رسالة الغلط وإنصلحهاولك سطر سطر 🌟
