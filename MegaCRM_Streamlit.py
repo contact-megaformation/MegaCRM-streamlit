@@ -583,37 +583,47 @@ if role=="موظف" and employee:
         except Exception as e:
             st.error(f"❌ خطأ أثناء الإضافة: {e}")
 
-    # ================== ✏️ تعديل عميل ==================
+        # ================== ✏️ تعديل عميل ==================
     st.markdown("### ✏️ تعديل بيانات عميل")
     df_emp_edit = df_emp_raw.copy()
-    df_emp_edit["Téléphone_norm"]=df_emp_edit["Téléphone"].apply(normalize_tn_phone)
+    df_emp_edit["Téléphone_norm"] = df_emp_edit["Téléphone"].apply(normalize_tn_phone)
     options = {
         f"[{i}] {r['Nom & Prénom']} — {format_display_phone(r['Téléphone_norm'])}": r["Téléphone_norm"]
-        for i, r in df_emp_edit.iterrows() if str(r.get("Téléphone","")).strip()!=""
+        for i, r in df_emp_edit.iterrows()
+        if str(r.get("Téléphone", "")).strip() != ""
     }
     if options:
         chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(options.keys()))
         chosen_phone = options[chosen_key]
-        cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"]==chosen_phone].iloc[0]
+        cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"] == chosen_phone].iloc[0]
 
         with st.form(f"edit_client_form::{employee}"):
-            col1,col2 = st.columns(2)
+            col1, col2 = st.columns(2)
+
             with col1:
                 new_name      = st.text_input("👤 الاسم و اللقب", value=str(cur_row["Nom & Prénom"]))
                 new_phone_raw = st.text_input("📞 رقم الهاتف", value=str(cur_row["Téléphone"]))
                 new_formation = st.text_input("📚 التكوين", value=str(cur_row["Formation"]))
+
             with col2:
+                # نحضّر قيمة افتراضية لتاريخ الميلاد بطريقة آمنة
+                raw_birth = str(cur_row.get("Date de naissance", "")).strip()
+                if raw_birth:
+                    dt_birth = pd.to_datetime(raw_birth, dayfirst=True, errors="coerce")
+                    default_birth = dt_birth.date() if pd.notna(dt_birth) else date.today()
+                else:
+                    default_birth = date.today()
+
                 new_birth = st.date_input(
                     "🎂 تاريخ الميلاد",
-                    value=(
-                        pd.to_datetime(cur_row.get("Date de naissance",""), dayfirst=True, errors="coerce").date()
-                        if str(cur_row.get("Date de naissance","")).strip() else date.today()
-                    )
+                    value=default_birth
                 )
+
                 new_ajout = st.date_input(
                     "🕓 تاريخ الإضافة",
                     value=pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date()
                 )
+
                 new_suivi = st.date_input(
                     "📆 تاريخ المتابعة",
                     value=(
@@ -621,54 +631,74 @@ if role=="موظف" and employee:
                         if str(cur_row["Date de suivi"]).strip() else date.today()
                     )
                 )
-                new_insc  = st.selectbox(
+
+                new_insc = st.selectbox(
                     "🟢 التسجيل",
-                    ["Pas encore","Inscrit"],
-                    index=(1 if str(cur_row["Inscription"]).strip().lower()=="oui" else 0)
+                    ["Pas encore", "Inscrit"],
+                    index=(1 if str(cur_row["Inscription"]).strip().lower() == "oui" else 0)
                 )
 
-            extra_note = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…")
+            extra_note = st.text_area(
+                "➕ أضف ملاحظة جديدة (طابع زمني)",
+                placeholder="اكتب ملاحظة لإلحاقها…"
+            )
             submitted = st.form_submit_button("💾 حفظ التعديلات")
 
         if submitted:
             try:
                 ws = get_spreadsheet().worksheet(employee)
-                values = ws.get_all_values(); header = values[0] if values else []
+                values = ws.get_all_values()
+                header = values[0] if values else []
                 tel_idx = header.index("Téléphone")
-                row_idx=None
-                for i,r in enumerate(values[1:], start=2):
-                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==chosen_phone:
-                        row_idx=i; break
+                row_idx = None
+                for i, r in enumerate(values[1:], start=2):
+                    if len(r) > tel_idx and normalize_tn_phone(r[tel_idx]) == chosen_phone:
+                        row_idx = i
+                        break
                 if not row_idx:
                     st.error("❌ تعذّر إيجاد الصف.")
                     st.stop()
-                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in [
-                    "Nom & Prénom","Téléphone","Date de naissance",
-                    "Formation","Date ajout","Date de suivi","Inscription","Remarque"
-                ]}
+
+                col_map = {
+                    h: (EXPECTED_HEADERS.index(h) + 1) for h in [
+                        "Nom & Prénom", "Téléphone", "Date de naissance",
+                        "Formation", "Date ajout", "Date de suivi",
+                        "Inscription", "Remarque"
+                    ]
+                }
+
                 new_phone_norm = normalize_tn_phone(new_phone_raw)
                 if not new_name.strip():
-                    st.error("❌ الاسم مطلوب."); st.stop()
+                    st.error("❌ الاسم مطلوب.")
+                    st.stop()
                 if not new_phone_norm.strip():
-                    st.error("❌ الهاتف مطلوب."); st.stop()
+                    st.error("❌ الهاتف مطلوب.")
+                    st.stop()
+
                 phones_except = set(df_all["Téléphone_norm"]) - {normalize_tn_phone(chosen_phone)}
                 if new_phone_norm in phones_except:
-                    st.error("⚠️ الرقم موجود مسبقًا."); st.stop()
+                    st.error("⚠️ الرقم موجود مسبقًا.")
+                    st.stop()
+
                 ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
                 ws.update_cell(row_idx, col_map["Téléphone"],   new_phone_norm)
                 ws.update_cell(row_idx, col_map["Date de naissance"], fmt_date(new_birth))
                 ws.update_cell(row_idx, col_map["Formation"],   new_formation.strip())
                 ws.update_cell(row_idx, col_map["Date ajout"],  fmt_date(new_ajout))
                 ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
-                ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc=="Inscrit" else "Pas encore")
+                ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc == "Inscrit" else "Pas encore")
+
                 if extra_note.strip():
                     old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
                     stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
-                    appended = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {extra_note.strip()}"
+                    appended = (old_rem + "\n" if old_rem else "") + f"[{stamp}] {extra_note.strip()}"
                     ws.update_cell(row_idx, col_map["Remarque"], appended)
-                st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
+
+                st.success("✅ تم حفظ التعديلات")
+                st.cache_data.clear()
             except Exception as e:
                 st.error(f"❌ خطأ: {e}")
+
 
     # ================== 🎨 Tag لون ==================
     st.markdown("### 🎨 Tag لون")
