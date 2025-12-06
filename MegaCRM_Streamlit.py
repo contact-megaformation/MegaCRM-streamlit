@@ -360,7 +360,8 @@ if not df_all.empty and "DateAjout_dt" in df_all.columns:
             .agg(
                 Clients=("Nom & Prénom", "count"),
                 Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
-                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip() != "").sum()),
+                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip() != "").sum(),
+                ),
             )
             .reset_index()
             .rename(columns={"__sheet_name": "الموظف"})
@@ -641,7 +642,10 @@ if role=="موظف" and employee:
                 if not row_idx:
                     st.error("❌ تعذّر إيجاد الصف.")
                     st.stop()
-                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Date de naissance","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
+                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in [
+                    "Nom & Prénom","Téléphone","Date de naissance",
+                    "Formation","Date ajout","Date de suivi","Inscription","Remarque"
+                ]}
                 new_phone_norm = normalize_tn_phone(new_phone_raw)
                 if not new_name.strip():
                     st.error("❌ الاسم مطلوب."); st.stop()
@@ -668,7 +672,6 @@ if role=="موظف" and employee:
 
     # ================== 🎨 Tag لون ==================
     st.markdown("### 🎨 Tag لون")
-    scope_df = filtered_df df_emp_raw
     scope_df = filtered_df if not filtered_df.empty else df_emp_raw
     scope_df = scope_df.copy()
     scope_df["Téléphone_norm"] = scope_df["Téléphone"].apply(normalize_tn_phone)
@@ -731,7 +734,7 @@ if role=="موظف" and employee:
         total_today = len(today_rows)
 
         inscrits_today = int(
-            today_rows["Inscription"].fillنا("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"]).sum()
+            today_rows["Inscription"].fillna("").astype(str).str.strip().str.lower().isin(["oui", "inscrit"]).sum()
         )
 
         alerts_today = int(
@@ -827,7 +830,7 @@ if tab_choice == "أرشيف" and role == "موظف" and employee:
     if df_arch.empty:
         st.info("لا يوجد عملاء في الأرشيف حالياً.")
     else:
-        df_arch["Téléphone_norm"] = df_arch["Téléphone"].apply(normalize_tn_phone)
+        df_arch["Téléphonique_norm"] = df_arch["Téléphone"].apply(normalize_tn_phone)
         df_arch["Alerte_view"] = df_arch.get("Alerte","")
         st.dataframe(
             df_arch[[c for c in EXPECTED_HEADERS if c in df_arch.columns]]
@@ -985,3 +988,8 @@ if role=="أدمن":
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
         else:
             st.caption("لا يوجد سجلّ نقل.")
+
+جرّب تشغّل الكود من جديد:
+
+```bash
+streamlit run MegaCRM_Streamlit.py
