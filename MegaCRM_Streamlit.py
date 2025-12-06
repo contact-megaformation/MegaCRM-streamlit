@@ -1,337 +1,880 @@
+
+# MegaCRM_Streamlit.py
+# CRM فقط + أرشيف — بدون أي كود مداخيل/مصاريف
+# + أزرار تفتح MegaPay و Mega Formateur و AttendanceHub
+# + فلترة بالتكوين داخل لوحة الموظّف
+# + إحصائيات شهرية فيها Clients اليوم و Inscrits اليوم
+
+import json, urllib.parse, time
 import streamlit as st
 import pandas as pd
-from pathlib import Path
-from datetime import datetime
+import gspread
+import gspread.exceptions as gse
+from google.oauth2.service_account import Credentials
+from datetime import datetime, date, timedelta, timezone
+from PIL import Image
 
-# ================== إعدادات عامة ==================
-st.set_page_config(page_title="MegaEdu - منصة تعليمية", layout="wide")
+# ============ إعداد الصفحة ============
+st.set_page_config(page_title="MegaCRM", layout="wide", initial_sidebar_state="expanded")
+st.markdown(
+    """
+    <div style='text-align:center'>
+      <h1>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
+    </div>
+    <hr/>
+    """, unsafe_allow_html=True
+)
 
-DATA_DIR = Path("data_megaedu")
-USERS_FILE = DATA_DIR / "users.csv"
-COURSES_FILE = DATA_DIR / "courses.csv"
-LESSONS_FILE = DATA_DIR / "lessons.csv"
-ENROLLMENTS_FILE = DATA_DIR / "enrollments.csv"
-PROGRESS_FILE = DATA_DIR / "progress.csv"
-
-def ensure_data_dir():
-    DATA_DIR.mkdir(exist_ok=True)
-    if not USERS_FILE.exists():
-        df = pd.DataFrame(
-            [
-                {"email": "admin@mega.tn", "password": "admin123", "role": "admin", "full_name": "Admin Mega"},
-                {"email": "formateur@mega.tn", "password": "123456", "role": "trainer", "full_name": "Khoulah"},
-                {"email": "student@mega.tn", "password": "123456", "role": "student", "full_name": "Etudiant Test"},
-            ]
-        )
-        df.to_csv(USERS_FILE, index=False)
-
-    for f in [COURSES_FILE, LESSONS_FILE, ENROLLMENTS_FILE, PROGRESS_FILE]:
-        if not f.exists():
-            pd.DataFrame().to_csv(f, index=False)
-
-def load_csv(path: Path) -> pd.DataFrame:
-    if not path.exists():
-        return pd.DataFrame()
-    try:
-        df = pd.read_csv(path)
-    except Exception:
-        df = pd.DataFrame()
-    return df
-
-def save_csv(df: pd.DataFrame, path: Path):
-    df.to_csv(path, index=False)
-
-def login(email, password):
-    users = load_csv(USERS_FILE)
-    if users.empty:
-        return None
-    user = users[(users["email"] == email) & (users["password"] == password)]
-    if user.empty:
-        return None
-    return user.iloc[0].to_dict()
-
-def get_next_id(df: pd.DataFrame, col: str = "id") -> int:
-    if df.empty or col not in df.columns:
-        return 1
-    try:
-        return int(df[col].max()) + 1
-    except Exception:
-        return 1
-
-def admin_dashboard(user):
-    st.subheader("📊 لوحة تحكم الأدمن")
-    col1, col2, col3, col4 = st.columns(4)
-    courses = load_csv(COURSES_FILE)
-    lessons = load_csv(LESSONS_FILE)
-    enroll = load_csv(ENROLLMENTS_FILE)
-    students = load_csv(USERS_FILE)
-    with col1:
-        st.metric("عدد التكوينات", 0 if courses.empty else len(courses))
-    with col2:
-        st.metric("عدد الدروس", 0 if lessons.empty else len(lessons))
-    with col3:
-        st.metric("عدد التسجيلات", 0 if enroll.empty else len(enroll))
-    with col4:
-        st.metric("عدد الطلبة", 0 if students.empty else len(students[students["role"] == "student"]))
-    st.write("من هنا تنجم تمشي لإدارة التكوينات، الدروس، و المستخدمين من القائمة على اليسار 👈")
-
-def page_manage_courses():
-    st.subheader("📚 إدارة التكوينات / الكورسات")
-    courses = load_csv(COURSES_FILE)
-
-    with st.expander("➕ إضافة تكوين جديد", expanded=True):
-        title = st.text_input("عنوان التكوين")
-        description = st.text_area("وصف قصير")
-        level = st.selectbox("المستوى", ["A1", "A2", "B1", "B2", "Débutant", "Intermédiaire", "Avancé"])
-        btn_add = st.button("حفظ التكوين")
-        if btn_add and title.strip():
-            cid = get_next_id(courses, "id")
-            new_row = {
-                "id": cid,
-                "title": title.strip(),
-                "description": description.strip(),
-                "level": level,
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
-            courses = pd.concat([courses, pd.DataFrame([new_row])], ignore_index=True)
-            save_csv(courses, COURSES_FILE)
-            st.success("✅ تم إضافة التكوين بنجاح")
-
-    st.markdown("### 📋 قائمة التكوينات")
-    courses = load_csv(COURSES_FILE)
-    if courses.empty:
-        st.info("مازال ما ثماش تكوينات. زيد واحد من الفوق.")
-    else:
-        st.dataframe(courses)
-
-def page_manage_lessons():
-    st.subheader("🎥 إدارة الدروس")
-    courses = load_csv(COURSES_FILE)
-    lessons = load_csv(LESSONS_FILE)
-
-    if courses.empty:
-        st.warning("لازم على الأقل تكوين واحد قبل ما تزيد دروس.")
-        return
-
-    with st.expander("➕ إضافة درس جديد", expanded=True):
-        course_title_map = {f'{row["title"]} (ID: {row["id"]})': row["id"] for _, row in courses.iterrows()}
-        course_label = st.selectbox("إختر التكوين", list(course_title_map.keys()))
-        course_id = course_title_map[course_label]
-        lesson_title = st.text_input("عنوان الدرس")
-        video_url = st.text_input("رابط الفيديو (YouTube, Drive...)")
-        attached_file = st.text_input("رابط ملف (PDF, PPT...) - إختياري")
-        btn_lesson = st.button("حفظ الدرس")
-        if btn_lesson and lesson_title.strip():
-            lid = get_next_id(lessons, "id")
-            new_row = {
-                "id": lid,
-                "course_id": course_id,
-                "title": lesson_title.strip(),
-                "video_url": video_url.strip(),
-                "file_url": attached_file.strip(),
-                "created_at": datetime.now().isoformat(timespec="seconds"),
-            }
-            lessons = pd.concat([lessons, pd.DataFrame([new_row])], ignore_index=True)
-            save_csv(lessons, LESSONS_FILE)
-            st.success("✅ تم إضافة الدرس")
-
-    st.markdown("### 📋 قائمة الدروس")
-    lessons = load_csv(LESSONS_FILE)
-    if lessons.empty:
-        st.info("مازال ما ثماش دروس.")
-    else:
-        df = lessons.merge(courses[["id", "title"]], left_on="course_id", right_on="id", how="left", suffixes=("", "_course"))
-        df = df[["id", "title_course", "title", "video_url", "file_url", "created_at"]]
-        df.rename(columns={"title_course": "course_title"}, inplace=True)
-        st.dataframe(df)
-
-def page_manage_enrollments():
-    st.subheader("🧑‍🎓 تسجيل الطلبة في التكوينات")
-    users = load_csv(USERS_FILE)
-    courses = load_csv(COURSES_FILE)
-    enroll = load_csv(ENROLLMENTS_FILE)
-
-    students = users[users["role"] == "student"] if not users.empty else pd.DataFrame()
-
-    if students.empty or courses.empty:
-        st.warning("يلزم يكون فما طلبة وتكوينات باش تسجل.")
-        return
-
-    with st.expander("➕ تسجيل طالب في تكوين", expanded=True):
-        student_map = {f'{row["full_name"]} ({row["email"]})': row["email"] for _, row in students.iterrows()}
-        course_map = {f'{row["title"]} (ID: {row["id"]})': row["id"] for _, row in courses.iterrows()}
-        student_label = st.selectbox("إختر الطالب", list(student_map.keys()))
-        course_label = st.selectbox("إختر التكوين", list(course_map.keys()))
-        btn_enroll = st.button("تسجيل")
-
-        if btn_enroll:
-            student_email = student_map[student_label]
-            course_id = course_map[course_label]
-            if not enroll.empty and ((enroll["student_email"] == student_email) & (enroll["course_id"] == course_id)).any():
-                st.warning("هذا الطالب مسجل من قبل في هذا التكوين.")
-            else:
-                new_row = {
-                    "id": get_next_id(enroll, "id"),
-                    "student_email": student_email,
-                    "course_id": course_id,
-                    "created_at": datetime.now().isoformat(timespec="seconds"),
-                }
-                enroll = pd.concat([enroll, pd.DataFrame([new_row])], ignore_index=True)
-                save_csv(enroll, ENROLLMENTS_FILE)
-                st.success("✅ تم التسجيل بنجاح")
-
-    st.markdown("### 📋 قائمة التسجيلات")
-    enroll = load_csv(ENROLLMENTS_FILE)
-    if enroll.empty:
-        st.info("مازال ما ثماش تسجيلات.")
-    else:
-        df = enroll.merge(courses[["id", "title"]], left_on="course_id", right_on="id", how="left", suffixes=("", "_course"))
-        df = df.merge(users[["email", "full_name"]], left_on="student_email", right_on="email", how="left", suffixes=("", "_student"))
-        df = df[["id", "full_name", "student_email", "title", "created_at"]]
-        df.rename(columns={"title": "course_title"}, inplace=True)
-        st.dataframe(df)
-
-def page_student_my_courses(user):
-    st.subheader("📚 التكوينات متاعي")
-    enroll = load_csv(ENROLLMENTS_FILE)
-    courses = load_csv(COURSES_FILE)
-    lessons = load_csv(LESSONS_FILE)
-    progress = load_csv(PROGRESS_FILE)
-
-    if enroll.empty:
-        st.info("مازال ما ثماش تسجيلات.")
-        return
-
-    my_enroll = enroll[enroll["student_email"] == user["email"]]
-    if my_enroll.empty:
-        st.info("موش مسجل في حتى تكوين. إسأل الإدارة باش يسجلوك.")
-        return
-
-    my_courses = my_enroll.merge(courses, left_on="course_id", right_on="id", how="left", suffixes=("", "_course"))
-    course_options = {row["title"]: row["course_id"] for _, row in my_courses.iterrows()}
-    course_title = st.selectbox("إختر تكوين باش تشوف الدروس", list(course_options.keys()))
-    course_id = course_options[course_title]
-
-    course_lessons = lessons[lessons["course_id"] == course_id]
-    if course_lessons.empty:
-        st.warning("مازال ما ثماش دروس في التكوين هذا.")
-        return
-
-    st.markdown(f"### 🎓 دروس التكوين: {course_title}")
-
-    for _, row in course_lessons.iterrows():
-        lid = row["id"]
-        done = False
-        if not progress.empty:
-            done = ((progress["student_email"] == user["email"]) & (progress["lesson_id"] == lid)).any()
-
-        with st.expander(f'{"✅" if done else "⬜"} {row["title"]}', expanded=False):
-            if row.get("video_url"):
-                st.markdown(f"[🎥 فتح الفيديو]({row['video_url']})")
-            if row.get("file_url"):
-                st.markdown(f"[📄 تحميل الملف]({row['file_url']})")
-
-            if done:
-                st.success("كملت الدرس هذا ✔")
-            else:
-                if st.button("✅ نعلّم الدرس كمّل", key=f"done_{lid}"):
-                    prog = progress if not progress.empty else pd.DataFrame(columns=["student_email", "lesson_id", "done_at"])
-                    new_row = {
-                        "student_email": user["email"],
-                        "lesson_id": lid,
-                        "done_at": datetime.now().isoformat(timespec="seconds"),
-                    }
-                    prog = pd.concat([prog, pd.DataFrame([new_row])], ignore_index=True)
-                    save_csv(prog, PROGRESS_FILE)
-                    st.success("تم حفظ التقدم ✅")
-                    st.experimental_rerun()
-
-def page_trainer_lessons(user):
-    st.subheader("👨‍🏫 دروس المكوّن")
-    courses = load_csv(COURSES_FILE)
-    lessons = load_csv(LESSONS_FILE)
-    if courses.empty or lessons.empty:
-        st.info("مازال ما ثماش تكوينات أو دروس.")
-        return
-
-    df = lessons.merge(courses[["id", "title"]], left_on="course_id", right_on="id", how="left", suffixes=("", "_course"))
-    df = df[["id", "title_course", "title", "video_url", "file_url", "created_at"]]
-    df.rename(columns={"title_course": "course_title"}, inplace=True)
-    st.dataframe(df)
-
-def main():
-    ensure_data_dir()
+# ============ Sidebar Links ============
+with st.sidebar:
+    st.markdown("### 💵 إدارة المداخيل والمصاريف")
     st.markdown(
         """
-        <div style='text-align:center'>
-          <h1>🎓 MegaEdu - منصة تعليمية بسيطة</h1>
-          <p>نسخة أولية باش تستعملها مع Mega Formation: كورسات، دروس، طلبة و متابعة التقدم.</p>
-        </div>
-        <hr/>
+        <a href="https://megapay.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#16a085,#1abc9c);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🚀 فتح MegaPay
+        </a>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
-    if "user" not in st.session_state:
-        st.session_state.user = None
+    st.markdown("---")
 
-    if st.session_state.user is None:
-        tab1, tab2 = st.tabs(["تسجيل الدخول", "مستخدم تجريبي / Info"])
-        with tab1:
-            email = st.text_input("الإيميل", value="admin@mega.tn")
-            password = st.text_input("كلمة السر", type="password", value="admin123")
-            if st.button("دخول"):
-                user = login(email.strip(), password.strip())
-                if user is None:
-                    st.error("الإيميل أو كلمة السر غالطين.")
+    st.markdown("### 👨‍🏫 بوابة المكوّنين")
+    st.markdown(
+        """
+        <a href="https://mega-formateur.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#0078d7,#00b7ff);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🔀 فتح Mega Formateur
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown("---")
+
+    st.markdown("### 🕒 غيابات المتربّصين")
+    st.markdown(
+        """
+        <a href="https://attendancehub-mega.streamlit.app/" target="_blank"
+           style="
+              display:inline-block;
+              background:linear-gradient(90deg,#c0392b,#e74c3c);
+              color:#fff;
+              padding:10px 18px;
+              border-radius:10px;
+              text-decoration:none;
+              font-weight:600;
+              font-size:15px;
+              text-align:center;
+              width:100%;
+              box-shadow:0 4px 8px rgba(0,0,0,0.15);
+           ">
+           🕒 فتح AttendanceHub
+        </a>
+        """,
+        unsafe_allow_html=True
+    )
+
+# ============ Google Auth ============
+SCOPE = ["https://www.googleapis.com/auth/spreadsheets"]
+
+def make_client_and_sheet_id():
+    try:
+        sa = st.secrets["gcp_service_account"]
+        sa_info = dict(sa) if hasattr(sa, "keys") else (json.loads(sa) if isinstance(sa, str) else {})
+        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPE)
+        client = gspread.authorize(creds)
+        sheet_id = st.secrets["SPREADSHEET_ID"]
+        return client, sheet_id
+    except Exception:
+        # لوكال
+        creds = Credentials.from_service_account_file("service_account.json", scopes=SCOPE)
+        client = gspread.authorize(creds)
+        sheet_id = "PUT_YOUR_SHEET_ID_HERE"
+        return client, sheet_id
+
+client, SPREADSHEET_ID = make_client_and_sheet_id()
+
+# ============ ثوابت الجداول ============
+EXPECTED_HEADERS = [
+    "Nom & Prénom","Téléphone","Type de contact","Formation",
+    "Remarque","Date ajout","Date de suivi","Alerte",
+    "Inscription","Employe","Tag"
+]
+
+REASSIGN_LOG_SHEET   = "Reassign_Log"
+REASSIGN_LOG_HEADERS = ["timestamp","moved_by","src_employee","dst_employee","client_name","phone"]
+
+# ============ Helpers ============
+def fmt_date(d: date|None) -> str:
+    return d.strftime("%d/%m/%Y") if isinstance(d, date) else ""
+
+def normalize_tn_phone(s: str) -> str:
+    digits = "".join(ch for ch in str(s) if ch.isdigit())
+    if digits.startswith("216"): return digits
+    if len(digits) == 8: return "216" + digits
+    return digits
+
+def format_display_phone(s: str) -> str:
+    d = "".join(ch for ch in str(s) if ch.isdigit())
+    return f"+{d}" if d else ""
+
+def color_tag(val):
+    if isinstance(val, str) and val.strip().startswith("#") and len(val.strip()) == 7:
+        return f"background-color: {val}; color: white;"
+    return ""
+
+def mark_alert_cell(val: str):
+    s = str(val).strip()
+    if not s: return ''
+    if "متأخر" in s: return 'background-color:#ffe6b3;color:#7a4e00'
+    return 'background-color:#ffcccc;color:#7a0000'
+
+def highlight_inscrit_row(row: pd.Series):
+    insc = str(row.get("Inscription","")).strip().lower()
+    return ['background-color:#d6f5e8' if insc in ("inscrit","oui") else '' for _ in row.index]
+
+# ===================== Sheets Utils (Backoff + Cache) =====================
+def get_spreadsheet():
+    if st.session_state.get("sh_id") == SPREADSHEET_ID and "sh_obj" in st.session_state:
+        return st.session_state["sh_obj"]
+    last_err = None
+    for i in range(5):
+        try:
+            sh = client.open_by_key(SPREADSHEET_ID)
+            st.session_state["sh_obj"] = sh
+            st.session_state["sh_id"]  = SPREADSHEET_ID
+            return sh
+        except gse.APIError as e:
+            last_err = e
+            time.sleep(0.5 * (2**i))
+    st.error("تعذر فتح Google Sheet (ربما الكوتا تعدّت).")
+    raise last_err
+
+def ensure_ws(title: str, columns: list[str]):
+    sh = get_spreadsheet()
+    try:
+        ws = sh.worksheet(title)
+    except gspread.WorksheetNotFound:
+        ws = sh.add_worksheet(title=title, rows="2000", cols=str(max(len(columns), 8)))
+        ws.update("1:1", [columns])
+        return ws
+    header = ws.row_values(1)
+    if not header or header[:len(columns)] != columns:
+        ws.update("1:1", [columns])
+    return ws
+
+# ============ تحميل كل أوراق الموظفين ============
+@st.cache_data(ttl=600)
+def load_all_data():
+    sh = get_spreadsheet()
+    all_dfs, all_emps = [], []
+    for ws in sh.worksheets():
+        title = ws.title.strip()
+        if title.endswith("_PAIEMENTS"): continue
+        if title.startswith("_"): continue
+        if title in (REASSIGN_LOG_SHEET,): continue
+
+        all_emps.append(title)
+        rows = ws.get_all_values()
+        if not rows:
+            ws.update("1:1",[EXPECTED_HEADERS]); rows = ws.get_all_values()
+        data_rows = rows[1:] if len(rows)>1 else []
+        fixed = []
+        for r in data_rows:
+            r = list(r or [])
+            if len(r)<len(EXPECTED_HEADERS): r += [""]*(len(EXPECTED_HEADERS)-len(r))
+            else: r = r[:len(EXPECTED_HEADERS)]
+            fixed.append(r)
+        df = pd.DataFrame(fixed, columns=EXPECTED_HEADERS)
+        df["__sheet_name"] = title
+        all_dfs.append(df)
+    big = pd.concat(all_dfs, ignore_index=True) if all_dfs else pd.DataFrame(columns=EXPECTED_HEADERS+["__sheet_name"])
+    return big, all_emps
+
+df_all, all_employes = load_all_data()
+
+# ============ Sidebar ============
+try:
+    st.sidebar.image(Image.open("logo.png"), use_container_width=True)
+except Exception:
+    pass
+
+tab_choice = st.sidebar.radio("📑 اختر تبويب:", ["CRM", "أرشيف"], index=0)
+role = st.sidebar.radio("الدور", ["موظف","أدمن"], horizontal=True)
+employee = st.sidebar.selectbox("👨‍💼 اختر الموظّف (ورقة Google Sheets)", all_employes) if (role=="موظف" and all_employes) else None
+
+# ============ أقفال ============
+def admin_unlocked() -> bool:
+    ok = st.session_state.get("admin_ok", False)
+    ts = st.session_state.get("admin_ok_at")
+    return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=30))
+
+def admin_lock_ui():
+    with st.sidebar.expander("🔐 إدارة (Admin)", expanded=(role=="أدمن" and not admin_unlocked())):
+        if admin_unlocked():
+            if st.button("قفل صفحة الأدمِن"):
+                st.session_state["admin_ok"]=False; st.session_state["admin_ok_at"]=None; st.rerun()
+        else:
+            admin_pwd = st.text_input("كلمة سرّ الأدمِن", type="password")
+            if st.button("فتح صفحة الأدمِن"):
+                conf = str(st.secrets.get("admin_password","admin123"))
+                if admin_pwd and admin_pwd==conf:
+                    st.session_state["admin_ok"]=True; st.session_state["admin_ok_at"]=datetime.now()
+                    st.success("تم فتح صفحة الأدمِن لمدة 30 دقيقة.")
                 else:
-                    st.session_state.user = user
-                    st.experimental_rerun()
-        with tab2:
-            st.info(
-                """
-                تنجم تجرب المنصة بالحسابات الجاهزة:
-                - أدمن: admin@mega.tn / admin123
-                - مكوّن: formateur@mega.tn / 123456
-                - طالب: student@mega.tn / 123456
-                """
+                    st.error("كلمة سرّ غير صحيحة.")
+
+if role=="أدمن":
+    admin_lock_ui()
+
+def emp_pwd_for(emp_name:str)->str:
+    try:
+        mp = st.secrets["employee_passwords"]
+        return str(mp.get(emp_name, mp.get("_default","1234")))
+    except Exception:
+        return "1234"
+
+def emp_unlocked(emp_name:str)->bool:
+    ok = st.session_state.get(f"emp_ok::{emp_name}", False)
+    ts = st.session_state.get(f"emp_ok_at::{emp_name}")
+    return bool(ok and ts and (datetime.now()-ts)<=timedelta(minutes=15))
+
+def emp_lock_ui(emp_name: str, ns: str = ""):
+    ns_prefix = f"{emp_name}::{ns}" if ns else emp_name
+    with st.expander(f"🔐 حماية ورقة الموظّف: {emp_name}", expanded=not emp_unlocked(emp_name)):
+        if emp_unlocked(emp_name):
+            c1, c2 = st.columns(2)
+            c1.success("مفتوح (15 دقيقة).")
+            if c2.button("قفل الآن", key=f"btn_close::{ns_prefix}"):
+                st.session_state[f"emp_ok::{emp_name}"] = False
+                st.session_state[f"emp_ok_at::{emp_name}"] = None
+        else:
+            pwd_try = st.text_input("أدخل كلمة السرّ", type="password", key=f"pwd::{ns_prefix}")
+            if st.button("فتح", key=f"btn_open::{ns_prefix}"):
+                if pwd_try == emp_pwd_for(emp_name):
+                    st.session_state[f"emp_ok::{emp_name}"] = True
+                    st.session_state[f"emp_ok_at::{emp_name}"] = datetime.now()
+                    st.success("تم الفتح لمدة 15 دقيقة.")
+                else:
+                    st.error("كلمة سرّ غير صحيحة.")
+
+# ============ مشتقات عامة ============
+df_all = df_all.copy()
+if not df_all.empty:
+    df_all["DateAjout_dt"] = pd.to_datetime(df_all["Date ajout"], dayfirst=True, errors="coerce")
+    df_all["DateSuivi_dt"] = pd.to_datetime(df_all["Date de suivi"], dayfirst=True, errors="coerce")
+    df_all["Mois"] = df_all["DateAjout_dt"].dt.strftime("%m-%Y")
+    today = datetime.now().date()
+    base_alert = df_all["Alerte"].fillna("").astype(str).str.strip()
+    dsv_date = df_all["DateSuivi_dt"].dt.date
+    due_today = dsv_date.eq(today).fillna(False)
+    overdue  = dsv_date.lt(today).fillna(False)
+    df_all["Alerte_view"] = base_alert
+    df_all.loc[base_alert.eq("") & overdue, "Alerte_view"] = "⚠️ متابعة متأخرة"
+    df_all.loc[base_alert.eq("") & due_today, "Alerte_view"] = "⏰ متابعة اليوم"
+    df_all["Téléphone_norm"] = df_all["Téléphone"].apply(normalize_tn_phone)
+    ALL_PHONES = set(df_all["Téléphone_norm"].dropna().astype(str))
+    df_all["Inscription_norm"] = df_all["Inscription"].fillna("").astype(str).str.strip().str.lower()
+    inscrit_mask = df_all["Inscription_norm"].isin(["oui","inscrit"])
+    df_all.loc[inscrit_mask, "Date de suivi"] = ""
+    df_all.loc[inscrit_mask, "Alerte_view"] = ""
+else:
+    df_all["Alerte_view"] = ""; df_all["Mois"] = ""; df_all["Téléphone_norm"] = ""; ALL_PHONES=set()
+
+# ============ Dashboard سريع ============
+st.subheader("لوحة إحصائيات سريعة")
+df_dash = df_all.copy()
+if df_dash.empty:
+    st.info("ما فماش داتا للعرض.")
+else:
+    df_dash["DateAjout_dt"] = pd.to_datetime(df_dash["Date ajout"], dayfirst=True, errors="coerce")
+    df_dash["DateSuivi_dt"] = pd.to_datetime(df_dash["Date de suivi"], dayfirst=True, errors="coerce")
+    today = datetime.now().date()
+    df_dash["Inscription_norm"] = df_dash["Inscription"].fillna("").astype(str).str.strip().str.lower()
+    df_dash["Alerte_norm"]      = df_dash["Alerte_view"].fillna("").astype(str).str.strip()
+    added_today_mask      = df_dash["DateAjout_dt"].dt.date.eq(today)
+    registered_today_mask = df_dash["Inscription_norm"].isin(["oui","inscrit"]) & added_today_mask
+    alert_now_mask        = df_dash["Alerte_norm"].ne("")
+    total_clients    = int(len(df_dash))
+    added_today      = int(added_today_mask.sum())
+    registered_today = int(registered_today_mask.sum())
+    alerts_now       = int(alert_now_mask.sum())
+    registered_total = int((df_dash["Inscription_norm"]=="oui").sum())
+    rate = round((registered_total/total_clients)*100,2) if total_clients else 0.0
+    c1,c2,c3,c4,c5 = st.columns(5)
+    c1.metric("👥 إجمالي العملاء", f"{total_clients}")
+    c2.metric("🆕 المضافون اليوم", f"{added_today}")
+    c3.metric("✅ المسجّلون اليوم", f"{registered_today}")
+    c4.metric("🚨 التنبيهات الحالية", f"{alerts_now}")
+    c5.metric("📈 نسبة التسجيل الإجمالية", f"{rate}%")
+
+# ============ إحصائيات شهرية ============
+st.markdown("---")
+st.subheader("📅 إحصائيات شهرية (العملاء)")
+if not df_all.empty and "DateAjout_dt" in df_all.columns:
+    df_all["MonthStr"] = df_all["DateAjout_dt"].dt.strftime("%Y-%m")
+    months_avail = sorted(df_all["MonthStr"].dropna().unique(), reverse=True)
+    month_pick = st.selectbox("اختر شهر", months_avail, index=0 if months_avail else None)
+    if month_pick:
+        df_month = df_all[df_all["MonthStr"]==month_pick].copy()
+        total_clients_m = len(df_month)
+        total_inscrits_m= int((df_month["Inscription_norm"]=="oui").sum())
+        alerts_m        = int(df_month["Alerte_view"].fillna("").astype(str).str.strip().ne("").sum())
+        rate_m = round((total_inscrits_m/total_clients_m)*100,2) if total_clients_m else 0.0
+        c1,c2,c3,c4 = st.columns(4)
+        c1.metric("👥 عملاء هذا الشهر", f"{total_clients_m}")
+        c2.metric("✅ مسجّلون", f"{total_inscrits_m}")
+        c3.metric("🚨 تنبيهات", f"{alerts_m}")
+        c4.metric("📈 نسبة التسجيل", f"{rate_m}%")
+
+        st.markdown("#### 👨‍💼 حسب الموظّف")
+        grp_emp = (
+            df_month.groupby("__sheet_name", dropna=False)
+            .agg(
+                Clients=("Nom & Prénom", "count"),
+                Inscrits=("Inscription_norm", lambda x: (x == "oui").sum()),
+                Alerts=("Alerte_view", lambda x: (x.fillna("").astype(str).str.strip() != "").sum()),
             )
-        return
-
-    user = st.session_state.user
-    st.sidebar.markdown(f"**مربوط باسم:** {user['full_name']}  \n**الدور:** {user['role']}")
-    if st.sidebar.button("🚪 خروج"):
-        st.session_state.user = None
-        st.experimental_rerun()
-
-    role = user["role"]
-
-    if role == "admin":
-        menu = st.sidebar.radio(
-            "القائمة",
-            ["لوحة التحكّم", "إدارة التكوينات", "إدارة الدروس", "تسجيل الطلبة"],
+            .reset_index()
+            .rename(columns={"__sheet_name": "الموظف"})
         )
-        if menu == "لوحة التحكّم":
-            admin_dashboard(user)
-        elif menu == "إدارة التكوينات":
-            page_manage_courses()
-        elif menu == "إدارة الدروس":
-            page_manage_lessons()
-        elif menu == "تسجيل الطلبة":
-            page_manage_enrollments()
 
-    elif role == "student":
-        menu = st.sidebar.radio("القائمة", ["التكوينات متاعي"])
-        if menu == "التكوينات متاعي":
-            page_student_my_courses(user)
+        _today = datetime.now().date()
+        df_all_dates = df_all.copy()
+        df_all_dates["DateAjout_dt"] = pd.to_datetime(df_all_dates["Date ajout"], dayfirst=True, errors="coerce")
 
-    elif role == "trainer":
-        menu = st.sidebar.radio("القائمة", ["دروسي"])
-        if menu == "دروسي":
-            page_trainer_lessons(user)
+        # Clients اليوم لكل موظف
+        daily_clients_map = (
+            df_all_dates.loc[
+                df_all_dates["DateAjout_dt"].dt.date == _today
+            ]
+            .groupby("__sheet_name")["Nom & Prénom"].count()
+        )
 
+        # Inscrits اليوم لكل موظف
+        daily_inscrits_map = (
+            df_all_dates.loc[
+                (df_all_dates["DateAjout_dt"].dt.date == _today) &
+                (df_all_dates["Inscription"].fillna("").astype(str).str.strip().str.lower().isin(["oui","inscrit"]))
+            ]
+            .groupby("__sheet_name")["Nom & Prénom"].count()
+        )
+
+        grp_emp = grp_emp.merge(
+            daily_clients_map.rename("Clients اليوم").reset_index().rename(columns={"__sheet_name":"الموظف"}),
+            on="الموظف",
+            how="left"
+        )
+        grp_emp = grp_emp.merge(
+            daily_inscrits_map.rename("Inscrits اليوم").reset_index().rename(columns={"__sheet_name":"الموظف"}),
+            on="الموظف",
+            how="left"
+        )
+
+        grp_emp["Clients اليوم"] = grp_emp["Clients اليوم"].fillna(0).astype(int)
+        grp_emp["Inscrits اليوم"] = grp_emp["Inscrits اليوم"].fillna(0).astype(int)
+
+        grp_emp["% تسجيل"] = (
+            (grp_emp["Inscrits"] / grp_emp["Clients"]).replace([float("inf"), float("nan")], 0) * 100
+        ).round(2)
+
+        cols_order = ["الموظف", "Clients", "Clients اليوم", "Inscrits اليوم", "Inscrits", "% تسجيل", "Alerts"]
+        grp_emp = grp_emp[[c for c in cols_order if c in grp_emp.columns]]
+
+        st.dataframe(grp_emp.sort_values(["Inscrits", "Clients"], ascending=False), use_container_width=True)
+
+# ============ بحث عام برقم الهاتف ============
+st.subheader("🔎 بحث عام برقم الهاتف")
+global_phone = st.text_input("اكتب رقم الهاتف (8 أرقام محلية أو 216XXXXXXXX)")
+if global_phone.strip():
+    q = normalize_tn_phone(global_phone)
+    sd = df_all.copy()
+    sd["Téléphone_norm"]=sd["Téléphone"].apply(normalize_tn_phone)
+    sd["Alerte"]=sd.get("Alerte_view","")
+    sd = sd[sd["Téléphone_norm"]==q]
+    if sd.empty:
+        st.info("❕ ما لقيتش عميل بهذا الرقم.")
     else:
-        st.error("دور المستخدم موش معروف.")
+        disp = [c for c in EXPECTED_HEADERS if c in sd.columns]
+        st.dataframe(
+            sd[disp].style.apply(highlight_inscrit_row, axis=1).applymap(mark_alert_cell, subset=["Alerte"]),
+            use_container_width=True
+        )
+        st.markdown("---")
 
-if __name__ == "__main__":
-    main()
+# ============ تبويب CRM للموظّف ============
+if role=="موظف" and employee:
+    emp_lock_ui(employee, ns="crm")
+    if not emp_unlocked(employee):
+        st.info("🔒 أدخل كلمة سرّ الموظّف لفتح الورقة.")
+        st.stop()
+
+    st.subheader(f"📁 لوحة {employee}")
+    df_emp = df_all[df_all["__sheet_name"]==employee].copy()
+    if df_emp.empty:
+        st.warning("⚠️ لا يوجد أي عملاء بعد.")
+        st.stop()
+
+    df_emp["DateAjout_dt"] = pd.to_datetime(df_emp["Date ajout"], dayfirst=True, errors="coerce")
+    df_emp = df_emp.dropna(subset=["DateAjout_dt"])
+    df_emp["Mois"] = df_emp["DateAjout_dt"].dt.strftime("%m-%Y")
+    month_options = sorted(df_emp["Mois"].dropna().unique(), reverse=True)
+    month_filter  = st.selectbox("🗓️ اختر شهر الإضافة", month_options)
+
+    filtered_df = df_emp[df_emp["Mois"]==month_filter].copy()
+
+    # ===== فلترة بالتكوين =====
+    st.markdown("#### 🔎 فلترة حسب التكوين")
+    if filtered_df.empty:
+        st.info("لا توجد بيانات لهذا الشهر.")
+    else:
+        formations = sorted(
+            [f for f in filtered_df["Formation"].fillna("").astype(str).str.strip().unique() if f]
+        )
+        form_choice = st.selectbox("اختر التكوين", ["(الكل)"] + formations, index=0)
+        if form_choice and form_choice != "(الكل)":
+            filtered_df = filtered_df[filtered_df["Formation"].astype(str).str.strip() == form_choice]
+
+    # ===== عرض قائمة العملاء =====
+    def render_table(df_disp: pd.DataFrame):
+        if df_disp.empty:
+            st.info("لا توجد بيانات.")
+            return
+        _df = df_disp.copy()
+        _df["Alerte"]=_df.get("Alerte_view","")
+        styled = (_df[[c for c in EXPECTED_HEADERS if c in _df.columns]]
+                  .style.apply(highlight_inscrit_row, axis=1)
+                  .applymap(mark_alert_cell, subset=["Alerte"])
+                  .applymap(color_tag, subset=["Tag"]))
+        st.dataframe(styled, use_container_width=True)
+
+    st.markdown("### 📋 قائمة العملاء")
+    render_table(filtered_df)
+
+    # --- عرض العملاء الذين لديهم تنبيهات ---
+    if (not filtered_df.empty) and st.checkbox("🔴 عرض العملاء الذين لديهم تنبيهات"):
+        _df_alerts = filtered_df.copy()
+        _df_alerts["Alerte"] = _df_alerts.get("Alerte_view", "")
+        alerts_df = _df_alerts[_df_alerts["Alerte"].fillna("").astype(str).str.strip() != ""]
+        st.markdown("### 🚨 عملاء مع تنبيهات")
+        render_table(alerts_df)
+
+    # ================== ➕ أضف عميل جديد (للموظّف) ==================
+    st.markdown("### ➕ أضف عميل جديد")
+    with st.form(f"emp_add_client_form::{employee}"):
+        col1, col2 = st.columns(2)
+        with col1:
+            nom_emp   = st.text_input("👤 الاسم و اللقب", key=f"emp_add_nom::{employee}")
+            tel_emp   = st.text_input("📞 رقم الهاتف", key=f"emp_add_tel::{employee}")
+            formation_emp = st.text_input("📚 التكوين", key=f"emp_add_form::{employee}")
+            inscription_emp = st.selectbox("🟢 التسجيل", ["Pas encore", "Inscrit"], key=f"emp_add_insc::{employee}")
+        with col2:
+            type_contact_emp = st.selectbox("📞 نوع الاتصال", ["Visiteur", "Appel téléphonique", "WhatsApp", "Social media"], key=f"emp_add_type::{employee}")
+            date_ajout_emp   = st.date_input("🕓 تاريخ الإضافة", value=date.today(), key=f"emp_add_dt_add::{employee}")
+            date_suivi_emp   = st.date_input("📆 تاريخ المتابعة", value=date.today(), key=f"emp_add_dt_suivi::{employee}")
+
+        remarque_emp = st.text_area("🗒️ ملاحظة (اختياري)", key=f"emp_add_rem::{employee}")
+
+        submitted_add_emp = st.form_submit_button("📥 أضف العميل")
+
+    if submitted_add_emp:
+        try:
+            tel_norm = normalize_tn_phone(tel_emp)
+            if not (nom_emp and tel_norm and formation_emp):
+                st.error("❌ حقول أساسية ناقصة (الاسم، الهاتف، التكوين).")
+            elif tel_norm in ALL_PHONES:
+                st.warning("⚠️ الرقم موجود مسبقًا في قاعدة البيانات.")
+            else:
+                insc_val = "Oui" if inscription_emp == "Inscrit" else "Pas encore"
+                row_to_append = [
+                    nom_emp.strip(),
+                    tel_norm,
+                    type_contact_emp,
+                    formation_emp.strip(),
+                    remarque_emp.strip(),  # Remarque
+                    fmt_date(date_ajout_emp),
+                    fmt_date(date_suivi_emp),
+                    "",  # Alerte
+                    insc_val,
+                    employee,  # Employe
+                    ""  # Tag
+                ]
+                sh = get_spreadsheet()
+                ws_emp = sh.worksheet(employee)
+                header = ws_emp.row_values(1) or []
+                if not header or header[:len(EXPECTED_HEADERS)] != EXPECTED_HEADERS:
+                    ws_emp.update("1:1", [EXPECTED_HEADERS])
+                ws_emp.append_row(row_to_append)
+                st.success("✅ تم إضافة العميل بنجاح.")
+                st.cache_data.clear()
+                st.rerun()
+        except Exception as e:
+            st.error(f"❌ خطأ أثناء الإضافة: {e}")
+
+    # ================== ✏️ تعديل عميل ==================
+    st.markdown("### ✏️ تعديل بيانات عميل")
+    df_emp_edit = df_emp.copy()
+    df_emp_edit["Téléphone_norm"]=df_emp_edit["Téléphone"].apply(normalize_tn_phone)
+    options = {
+        f"[{i}] {r['Nom & Prénom']} — {format_display_phone(r['Téléphone_norm'])}": r["Téléphone_norm"]
+        for i, r in df_emp_edit.iterrows() if str(r.get("Téléphone","")).strip()!=""
+    }
+    if options:
+        chosen_key   = st.selectbox("اختر العميل (بالاسم/الهاتف)", list(options.keys()))
+        chosen_phone = options[chosen_key]
+        cur_row = df_emp_edit[df_emp_edit["Téléphone_norm"]==chosen_phone].iloc[0]
+
+        with st.form(f"edit_client_form::{employee}"):
+            col1,col2 = st.columns(2)
+            with col1:
+                new_name      = st.text_input("👤 الاسم و اللقب", value=str(cur_row["Nom & Prénom"]))
+                new_phone_raw = st.text_input("📞 رقم الهاتف", value=str(cur_row["Téléphone"]))
+                new_formation = st.text_input("📚 التكوين", value=str(cur_row["Formation"]))
+            with col2:
+                new_ajout = st.date_input("🕓 تاريخ الإضافة", value=pd.to_datetime(cur_row["Date ajout"], dayfirst=True, errors="coerce").date())
+                new_suivi = st.date_input("📆 تاريخ المتابعة", value=(pd.to_datetime(cur_row["Date de suivi"], dayfirst=True, errors="coerce").date() if str(cur_row["Date de suivi"]).strip() else date.today()))
+                new_insc  = st.selectbox("🟢 التسجيل", ["Pas encore","Inscrit"], index=(1 if str(cur_row["Inscription"]).strip().lower()=="oui" else 0))
+            new_remark_full = st.text_area("🗒️ ملاحظة (استبدال كامل)", value=str(cur_row.get("Remarque","")))
+            extra_note      = st.text_area("➕ أضف ملاحظة جديدة (طابع زمني)", placeholder="اكتب ملاحظة لإلحاقها…")
+            submitted = st.form_submit_button("💾 حفظ التعديلات")
+
+        if submitted:
+            try:
+                ws = get_spreadsheet().worksheet(employee)
+                values = ws.get_all_values(); header = values[0] if values else []
+                tel_idx = header.index("Téléphone")
+                row_idx=None
+                for i,r in enumerate(values[1:], start=2):
+                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==chosen_phone:
+                        row_idx=i; break
+                if not row_idx:
+                    st.error("❌ تعذّر إيجاد الصف.")
+                    st.stop()
+                col_map = {h:(EXPECTED_HEADERS.index(h)+1) for h in ["Nom & Prénom","Téléphone","Formation","Date ajout","Date de suivi","Inscription","Remarque"]}
+                new_phone_norm = normalize_tn_phone(new_phone_raw)
+                if not new_name.strip():
+                    st.error("❌ الاسم مطلوب."); st.stop()
+                if not new_phone_norm.strip():
+                    st.error("❌ الهاتف مطلوب."); st.stop()
+                phones_except = set(df_all["Téléphone_norm"]) - {normalize_tn_phone(chosen_phone)}
+                if new_phone_norm in phones_except:
+                    st.error("⚠️ الرقم موجود مسبقًا."); st.stop()
+                ws.update_cell(row_idx, col_map["Nom & Prénom"], new_name.strip())
+                ws.update_cell(row_idx, col_map["Téléphone"],   new_phone_norm)
+                ws.update_cell(row_idx, col_map["Formation"],   new_formation.strip())
+                ws.update_cell(row_idx, col_map["Date ajout"],  fmt_date(new_ajout))
+                ws.update_cell(row_idx, col_map["Date de suivi"], fmt_date(new_suivi))
+                ws.update_cell(row_idx, col_map["Inscription"], "Oui" if new_insc=="Inscrit" else "Pas encore")
+                if new_remark_full.strip() != str(cur_row.get("Remarque","")).strip():
+                    ws.update_cell(row_idx, col_map["Remarque"], new_remark_full.strip())
+                if extra_note.strip():
+                    old_rem = ws.cell(row_idx, col_map["Remarque"]).value or ""
+                    stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                    appended = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {extra_note.strip()}"
+                    ws.update_cell(row_idx, col_map["Remarque"], appended)
+                st.success("✅ تم حفظ التعديلات"); st.cache_data.clear()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
+
+    # ================== ملاحظات سريعة + Tag ==================
+    st.markdown("### 📝 ملاحظة سريعة")
+    scope_df = filtered_df if not filtered_df.empty else df_emp
+    scope_df = scope_df.copy(); scope_df["Téléphone_norm"]=scope_df["Téléphone"].apply(normalize_tn_phone)
+    tel_key = st.selectbox("اختر العميل", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()])
+    tel_to_update = normalize_tn_phone(tel_key.split("—")[-1])
+    quick_note = st.text_area("🗒️ النص")
+    if st.button("📌 أضف الملاحظة"):
+        try:
+            ws = get_spreadsheet().worksheet(employee)
+            values = ws.get_all_values(); header = values[0] if values else []
+            tel_idx = header.index("Téléphone")
+            row_idx=None
+            for i,r in enumerate(values[1:], start=2):
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_to_update:
+                    row_idx=i; break
+            if not row_idx:
+                st.error("❌ الهاتف غير موجود.")
+            else:
+                rem_col = EXPECTED_HEADERS.index("Remarque")+1
+                old_rem = ws.cell(row_idx, rem_col).value or ""
+                stamp = datetime.now().strftime("%d/%m/%Y %H:%M")
+                updated = (old_rem+"\n" if old_rem else "")+f"[{stamp}] {quick_note.strip()}"
+                ws.update_cell(row_idx, rem_col, updated)
+                st.success("✅ تمت الإضافة"); st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
+
+    st.markdown("### 🎨 Tag لون")
+    tel_key2 = st.selectbox("اختر العميل للتلوين", [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _, r in scope_df.iterrows()], key="tag_select")
+    tel_color = normalize_tn_phone(tel_key2.split("—")[-1])
+    hex_color = st.color_picker("اللون", value=st.session_state.get("last_color","#00AA88"))
+    if st.button("🖌️ تلوين"):
+        try:
+            ws = get_spreadsheet().worksheet(employee)
+            values = ws.get_all_values(); header = values[0] if values else []
+            tel_idx = header.index("Téléphone")
+            row_idx=None
+            for i,r in enumerate(values[1:], start=2):
+                if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==tel_color:
+                    row_idx=i; break
+            if not row_idx:
+                st.error("❌ لم يتم إيجاد العميل.")
+            else:
+                st.session_state["last_color"]=hex_color
+                color_col = EXPECTED_HEADERS.index("Tag")+1
+                ws.update_cell(row_idx, color_col, hex_color)
+                st.success("✅ تم التلوين"); st.cache_data.clear()
+        except Exception as e:
+            st.error(f"❌ خطأ: {e}")
+
+    # واتساب
+    st.markdown("### 💬 تواصل WhatsApp")
+    try:
+        scope_for_wa = (filtered_df if not filtered_df.empty else df_emp).copy()
+        wa_pick = st.selectbox("اختر العميل لفتح واتساب",
+                               [f"{r['Nom & Prénom']} — {format_display_phone(normalize_tn_phone(r['Téléphone']))}" for _,r in scope_for_wa.iterrows()],
+                               key="wa_pick")
+        default_msg = "سلام! معاك Mega Formation. بخصوص التكوين، نحبّوا ننسّقو معاك موعد المتابعة. 👍"
+        wa_msg = st.text_area("الرسالة (WhatsApp)", value=default_msg, key="wa_msg")
+        if st.button("📲 فتح واتساب"):
+            raw_tel = wa_pick.split("—")[-1]
+            tel_norm = normalize_tn_phone(raw_tel)
+            url = f"https://wa.me/{tel_norm}?text={urllib.parse.quote(wa_msg)}"
+            st.markdown(f"[افتح المحادثة الآن]({url})")
+            st.info("اضغط على الرابط لفتح واتساب.")
+    except Exception as e:
+        st.warning(f"WhatsApp: {e}")
+
+    # نقل عميل + سجلّ
+    st.markdown("### 🔁 نقل عميل بين الموظفين")
+    if all_employes:
+        colRA,colRB = st.columns(2)
+        src_emp = colRA.selectbox("من موظّف", all_employes, key="reassign_src")
+        dst_emp = colRB.selectbox("إلى موظّف", [e for e in all_employes if e!=src_emp], key="reassign_dst")
+        df_src = df_all[df_all["__sheet_name"]==src_emp].copy()
+        if df_src.empty:
+            st.info("❕ لا يوجد عملاء عند هذا الموظّف.")
+        else:
+            pick = st.selectbox("اختر العميل للنقل", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_src.iterrows()], key="reassign_pick")
+            phone_pick = normalize_tn_phone(pick.split("—")[-1])
+            if st.button("🚚 نقل الآن"):
+                try:
+                    sh = get_spreadsheet()
+                    ws_src, ws_dst = sh.worksheet(src_emp), sh.worksheet(dst_emp)
+                    values = ws_src.get_all_values(); header = values[0] if values else []
+                    tel_idx = header.index("Téléphone"); row_idx=None
+                    for i,r in enumerate(values[1:], start=2):
+                        if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick:
+                            row_idx=i; break
+                    if not row_idx:
+                        st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
+                    row_values = ws_src.row_values(row_idx)
+                    if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                    row_values = row_values[:len(EXPECTED_HEADERS)]
+                    row_values[EXPECTED_HEADERS.index("Employe")] = dst_emp
+                    ws_dst.append_row(row_values); ws_src.delete_rows(row_idx)
+                    wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
+                    wslog.append_row([datetime.now(timezone.utc).isoformat(), employee, src_emp, dst_emp, row_values[0], normalize_tn_phone(row_values[1])])
+                    st.success(f"✅ نقل ({row_values[0]}) من {src_emp} إلى {dst_emp}")
+                    st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ أثناء النقل: {e}")
+
+# ============ تبويب الأرشيف ============
+if tab_choice == "أرشيف" and role == "موظف" and employee:
+    emp_lock_ui(employee, ns="archive")
+    if not emp_unlocked(employee):
+        st.info("🔒 أدخل كلمة سرّ الموظّف لفتح الأرشيف.")
+        st.stop()
+
+    st.subheader(f"🗂️ أرشيف — {employee}")
+    ARCHIVE_SHEET = f"{employee}_Archive"
+    ws_arch = ensure_ws(ARCHIVE_SHEET, EXPECTED_HEADERS)
+    vals_arch = ws_arch.get_all_values()
+    df_arch = pd.DataFrame(vals_arch[1:], columns=vals_arch[0]) if vals_arch and len(vals_arch)>1 else pd.DataFrame(columns=EXPECTED_HEADERS)
+
+    if df_arch.empty:
+        st.info("لا يوجد عملاء في الأرشيف حالياً.")
+    else:
+        df_arch["Téléphone_norm"] = df_arch["Téléphone"].apply(normalize_tn_phone)
+        df_arch["Alerte_view"] = df_arch.get("Alerte","")
+        st.dataframe(
+            df_arch[[c for c in EXPECTED_HEADERS if c in df_arch.columns]]
+            .style.apply(highlight_inscrit_row, axis=1)
+            .applymap(mark_alert_cell, subset=["Alerte"]),
+            use_container_width=True
+        )
+
+    st.markdown("---")
+    st.subheader("🔁 نقل/استرجاع")
+
+    df_emp_all = df_all[df_all["__sheet_name"]==employee].copy()
+    if df_emp_all.empty:
+        st.caption("لا يوجد عملاء نشطين لنقلهم.")
+    else:
+        move_opt = st.selectbox("اختر عميل للنقل إلى الأرشيف", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_emp_all.iterrows()])
+        if st.button("📦 نقل إلى الأرشيف"):
+            try:
+                sh = get_spreadsheet()
+                ws_emp = sh.worksheet(employee)
+                vals = ws_emp.get_all_values(); header = vals[0] if vals else []
+                tel_idx = header.index("Téléphonique") if "Téléphonique" in header else header.index("Téléphone")
+                phone_pick = normalize_tn_phone(move_opt.split("—")[-1])
+                row_idx=None
+                for i,r in enumerate(vals[1:], start=2):
+                    if len(r)>tel_idx and normalize_tn_phone(r[tel_idx])==phone_pick:
+                        row_idx=i; break
+                if not row_idx:
+                    st.error("❌ لم يتم العثور على هذا العميل."); st.stop()
+                row_values = ws_emp.row_values(row_idx)
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                row_values = row_values[:len(EXPECTED_HEADERS)]
+                ws_arch.append_row(row_values); ws_emp.delete_rows(row_idx)
+                st.success("✅ تم النقل للأرشيف")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
+
+    if df_arch.empty:
+        st.caption("لا يوجد عملاء بالأرشيف للاسترجاع.")
+    else:
+        restore_opt = st.selectbox("اختر عميل للاسترجاع", [f"{r['Nom & Prénom']} — {format_display_phone(r['Téléphone'])}" for _, r in df_arch.iterrows()], key="restore_pick")
+        if st.button("♻️ استرجاع للورقة"):
+            try:
+                sh = get_spreadsheet()
+                ws_emp = sh.worksheet(employee)
+                valsA = ws_arch.get_all_values(); headerA = valsA[0] if valsA else []
+                tel_idxA = headerA.index("Téléphone")
+                phone_pick = normalize_tn_phone(restore_opt.split("—")[-1])
+                row_idx=None
+                for i,r in enumerate(valsA[1:], start=2):
+                    if len(r)>tel_idxA and normalize_tn_phone(r[tel_idxA])==phone_pick:
+                        row_idx=i; break
+                if not row_idx:
+                    st.error("❌ لم يتم العثور عليه في الأرشيف."); st.stop()
+                row_values = ws_arch.row_values(row_idx)
+                if len(row_values)<len(EXPECTED_HEADERS): row_values += [""]*(len(EXPECTED_HEADERS)-len(row_values))
+                row_values = row_values[:len(EXPECTED_HEADERS)]
+                ws_emp.append_row(row_values); ws_arch.delete_rows(row_idx)
+                st.success("✅ تم الاسترجاع")
+                st.cache_data.clear()
+                st.rerun()
+            except Exception as e:
+                st.error(f"❌ خطأ: {e}")
+
+# ============ صفحة الأدمِن ============
+if role=="أدمن":
+    st.markdown("## 👑 لوحة الأدمِن")
+    if not admin_unlocked():
+        st.info("🔐 أدخل كلمة سرّ الأدمِن من اليسار لفتح الصفحة.")
+    else:
+        colA,colB,colC = st.columns(3)
+        with colA:
+            st.subheader("➕ إضافة موظّف")
+            new_emp = st.text_input("اسم الموظّف الجديد")
+            if st.button("إنشاء ورقة"):
+                try:
+                    sh = get_spreadsheet()
+                    titles = [w.title for w in sh.worksheets()]
+                    if not new_emp or new_emp in titles:
+                        st.warning("⚠️ الاسم فارغ أو موجود.")
+                    else:
+                        sh.add_worksheet(title=new_emp, rows="1000", cols="20")
+                        sh.worksheet(new_emp).update("1:1",[EXPECTED_HEADERS])
+                        st.success("✔️ تم الإنشاء"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+        with colB:
+            st.subheader("➕ إضافة عميل (لأي موظّف)")
+            sh = get_spreadsheet()
+            target_emp = st.selectbox("اختر الموظّف", all_employes, key="admin_add_emp")
+            with st.form("admin_add_client_form"):
+                nom_a   = st.text_input("👤 الاسم و اللقب")
+                tel_a   = st.text_input("📞 الهاتف")
+                formation_a = st.text_input("📚 التكوين")
+                type_contact_a = st.selectbox("نوع التواصل", ["Visiteur","Appel téléphonique","WhatsApp","Social media"])
+                inscription_a  = st.selectbox("التسجيل", ["Pas encore","Inscrit"])
+                date_ajout_a   = st.date_input("تاريخ الإضافة", value=date.today())
+                suivi_date_a   = st.date_input("تاريخ المتابعة", value=date.today())
+                remarque_a     = st.text_area("🗒️ ملاحظة (اختياري)")
+                sub_admin = st.form_submit_button("📥 أضف")
+            if sub_admin:
+                try:
+                    if not (nom_a and tel_a and formation_a and target_emp):
+                        st.error("❌ حقول ناقصة."); st.stop()
+                    tel_norm = normalize_tn_phone(tel_a)
+                    if tel_norm in set(df_all["Téléphone_norm"]):
+                        st.warning("⚠️ الرقم موجود.")
+                    else:
+                        insc_val = "Oui" if inscription_a=="Inscrit" else "Pas encore"
+                        ws = sh.worksheet(target_emp)
+                        ws.append_row([
+                            nom_a,
+                            tel_norm,
+                            type_contact_a,
+                            formation_a,
+                            remarque_a.strip(),
+                            fmt_date(date_ajout_a),
+                            fmt_date(suivi_date_a),
+                            "",
+                            insc_val,
+                            target_emp,
+                            ""
+                        ])
+                        st.success("✅ تمت الإضافة"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+        with colC:
+            st.subheader("🗑️ حذف موظّف")
+            emp_to_delete = st.selectbox("اختر الموظّف", all_employes, key="admin_del_emp")
+            if st.button("❗ حذف الورقة كاملة"):
+                try:
+                    sh = get_spreadsheet()
+                    sh.del_worksheet(sh.worksheet(emp_to_delete))
+                    st.success("تم الحذف"); st.cache_data.clear()
+                except Exception as e:
+                    st.error(f"❌ خطأ: {e}")
+
+        st.markdown("---")
+        st.subheader("📜 سجلّ نقل العملاء")
+        wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
+        vals = wslog.get_all_values()
+        if vals and len(vals)>1:
+            df_log = pd.DataFrame(vals[1:], columns=vals[0])
+            def _fmt_ts(x):
+                try: return datetime.fromisoformat(x).astimezone().strftime("%Y-%m-%d %H:%M")
+                except: return x
+            if "timestamp" in df_log.columns:
+                df_log["وقت"]=df_log["timestamp"].apply(_fmt_ts)
+            show_cols=["وقت","moved_by","src_employee","dst_employee","client_name","phone"]
+            show_cols=[c for c in show_cols if c in df_log.columns]
+            st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
+        else:
+            st.caption("لا يوجد سجلّ نقل.")
