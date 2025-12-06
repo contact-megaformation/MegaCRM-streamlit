@@ -4,7 +4,7 @@
 # + فلترة بالتكوين داخل لوحة الموظّف
 # + إحصائيات شهرية فيها Clients اليوم و Inscrits اليوم
 # + تاريخ ميلاد العميل + تنبيه أعياد الميلاد
-# + تقرير يومي عبر WhatsApp للإدارة
+# + تقرير يومي عبر WhatsApp للإدارة مع الملاحظات كاملة
 
 import json, urllib.parse, time
 import streamlit as st
@@ -23,7 +23,8 @@ st.markdown(
       <h1>📊 CRM MEGA FORMATION - إدارة العملاء</h1>
     </div>
     <hr/>
-    """, unsafe_allow_html=True
+    """,
+    unsafe_allow_html=True,
 )
 
 # ============ Sidebar Links ============
@@ -48,7 +49,7 @@ with st.sidebar:
            🚀 فتح MegaPay
         </a>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     st.markdown("---")
@@ -73,7 +74,7 @@ with st.sidebar:
            🔀 فتح Mega Formateur
         </a>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
     st.markdown("---")
@@ -98,7 +99,7 @@ with st.sidebar:
            🕒 فتح AttendanceHub
         </a>
         """,
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 
 # ============ Google Auth ============
@@ -134,7 +135,7 @@ EXPECTED_HEADERS = [
     "Alerte",            # 8
     "Inscription",       # 9
     "Employe",           # 10
-    "Tag",               # 11
+    "Tag",               # 11,
 ]
 
 REASSIGN_LOG_SHEET   = "Reassign_Log"
@@ -1048,7 +1049,7 @@ if role == "موظف" and employee:
             for _, r in by_form.iterrows():
                 lines.append(f"• {r['Formation']}: {int(r['Nom & Prénom'])} عميل")
 
-        # العملاء المضافون اليوم + ملاحظاتهم
+        # العملاء المضافون اليوم + ملاحظاتهم (كاملة)
         if not today_rows.empty:
             lines.append("")
             lines.append("العملاء المضافون اليوم (مع الملاحظات):")
@@ -1058,17 +1059,13 @@ if role == "موظف" and employee:
                 form = str(r.get("Formation", "")).strip()
                 note = str(r.get("Remarque", "")).strip()
 
-                if len(note) > 120:
-                    note_short = note[:117] + "..."
-                else:
-                    note_short = note
+                line = f"- {name} ({form}) — {phone}"
+                if note:
+                    line += f"\n  ملاحظات: {note}"
 
-                lines.append(
-                    f"- {name} ({form}) — {phone}"
-                    + (f" | ملاحظة: {note_short}" if note_short else "")
-                )
+                lines.append(line)
 
-        # العملاء اللي صار معاهم تواصل اليوم (Date de suivi = اليوم)
+        # العملاء اللي صار معاهم تواصل اليوم (Date de suivi = اليوم) + ملاحظاتهم
         if not contacts_today.empty:
             lines.append("")
             lines.append("العملاء اللي صار معاهم تواصل اليوم (متابعة):")
@@ -1077,10 +1074,15 @@ if role == "موظف" and employee:
                 phone = str(r.get("Téléphone", "")).strip()
                 form = str(r.get("Formation", "")).strip()
                 t_contact = str(r.get("Type de contact", "")).strip()
-                lines.append(
-                    f"- {name} ({form}) — {phone}"
-                    + (f" | نوع التواصل: {t_contact}" if t_contact else "")
-                )
+                note = str(r.get("Remarque", "")).strip()
+
+                line = f"- {name} ({form}) — {phone}"
+                if t_contact:
+                    line += f" | نوع التواصل: {t_contact}"
+                if note:
+                    line += f"\n  ملاحظات: {note}"
+
+                lines.append(line)
 
         report_text = "\n".join(lines)
 
@@ -1386,7 +1388,7 @@ if role == "أدمن":
         st.subheader("📜 سجلّ نقل العملاء")
         wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
         vals = wslog.get_all_values()
-        if vals and len(vals) > 1:
+        if vals && len(vals) > 1:
             df_log = pd.DataFrame(vals[1:], columns=vals[0])
 
             def _fmt_ts(x):
