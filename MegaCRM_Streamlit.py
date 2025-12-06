@@ -1388,7 +1388,7 @@ if role == "أدمن":
         st.subheader("📜 سجلّ نقل العملاء")
         wslog = ensure_ws(REASSIGN_LOG_SHEET, REASSIGN_LOG_HEADERS)
         vals = wslog.get_all_values()
-        if vals && len(vals) > 1:
+        if vals and len(vals) > 1:
             df_log = pd.DataFrame(vals[1:], columns=vals[0])
 
             def _fmt_ts(x):
