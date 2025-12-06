@@ -988,8 +988,3 @@ if role=="أدمن":
             st.dataframe(df_log[show_cols].sort_values(show_cols[0], ascending=False), use_container_width=True)
         else:
             st.caption("لا يوجد سجلّ نقل.")
-
-جرّب تشغّل الكود من جديد:
-
-```bash
-streamlit run MegaCRM_Streamlit.py
